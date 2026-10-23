@@ -1,0 +1,10 @@
+/* Kcasa (Next.js) — small additions on top of the captured Astra/WooCommerce styles.
+   Only originals are stored (no WP size variants), so cropped WP sizes are emulated with object-fit. */
+.ast-woocommerce-container ul.products li.product .astra-shop-thumbnail-wrap img { aspect-ratio: 4 / 3; object-fit: cover; width: 100%; height: auto; }
+.ast-single-product-thumbnails img, .flex-control-thumbs img { aspect-ratio: 1 / 1; object-fit: cover; }
+.woocommerce-cart-form .product-thumbnail img, .woocommerce-mini-cart img { aspect-ratio: 4 / 3; object-fit: cover; }
+.woocommerce-register-link { margin-top: .5em; }
+.kc-quantity-discounts { margin: 1em 0; }
+.kc-quantity-discounts table { width: auto; min-width: 220px; }
+.kc-qty-discount-note { font-size: .85em; opacity: .8; margin: .25em 0 0; }
+.kc-twzip-select { width: 100%; }

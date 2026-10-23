@@ -1,0 +1,8 @@
+
+/* Global Color Schemes (background-scheme-default-3) */
+.stk--background-scheme--scheme-default-3{--stk-block-background-color:#0f0e17;--stk-heading-color:#fffffe;--stk-text-color:#fffffe;--stk-link-color:#f00069;--stk-accent-color:#f00069;--stk-subtitle-color:#f00069;--stk-button-background-color:#f00069;--stk-button-text-color:#fffffe;--stk-button-outline-color:#fffffe;}
+/* Global Color Schemes (container-scheme-default-3) */
+.stk--container-scheme--scheme-default-3{--stk-container-background-color:#0f0e17;--stk-heading-color:#fffffe;--stk-text-color:#fffffe;--stk-link-color:#f00069;--stk-accent-color:#f00069;--stk-subtitle-color:#f00069;--stk-button-background-color:#f00069;--stk-button-text-color:#fffffe;--stk-button-outline-color:#fffffe;}
+/* Global Preset Controls */
+:root{--stk--preset--font-size--small:var(--wp--preset--font-size--small);--stk--preset--font-size--medium:var(--wp--preset--font-size--medium);--stk--preset--font-size--large:var(--wp--preset--font-size--large);--stk--preset--font-size--x-large:var(--wp--preset--font-size--x-large);--stk--preset--spacing--20:var(--wp--preset--spacing--20);--stk--preset--spacing--30:var(--wp--preset--spacing--30);--stk--preset--spacing--40:var(--wp--preset--spacing--40);--stk--preset--spacing--50:var(--wp--preset--spacing--50);--stk--preset--spacing--60:var(--wp--preset--spacing--60);--stk--preset--spacing--70:var(--wp--preset--spacing--70);--stk--preset--spacing--80:var(--wp--preset--spacing--80);}
+/*# sourceURL=ugb-style-css-nodep-inline-css */

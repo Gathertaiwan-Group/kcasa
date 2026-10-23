@@ -1,0 +1,24 @@
+
+                            @media (max-width: 1024px){
+                    .wp-bottom-menu{
+                        display:flex;
+                    }
+                    .wp-bottom-menu-search-form-wrapper{
+                        display: block;
+                    }
+                }
+            
+            :root{
+                --wpbottommenu-font-size: 12px;
+                --wpbottommenu-icon-size: 24px;
+                --wpbottommenu-text-color: #555555;
+                --wpbottommenu-h-text-color: #000000;
+                --wpbottommenu-icon-color: #555555;
+                --wpbottommenu-h-icon-color: #000000;
+                --wpbottommenu-bgcolor: #ffffff;
+                --wpbottommenu-zindex: 9999;
+                --wpbottommenu-cart-count-bgcolor: #ff0000;
+                --wpbottommenu-wrapper-padding: 10px 0;
+            }
+
+        
