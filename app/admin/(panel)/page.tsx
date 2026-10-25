@@ -1,3 +1,4 @@
+import { requireAdmin } from '@/lib/admin/session';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import Link from 'next/link'
 import { Badge, money, Notice, type SP } from '@/components/admin/ui'
@@ -15,6 +16,7 @@ async function count(table: string, f?: (q: any) => any) {
 }
 
 export default async function Dashboard({ searchParams }: { searchParams: SP }) {
+  await requireAdmin();
   const q = await searchParams
   const [posts, pages, products, orders, pendingOrders, subs, media, drafts] = await Promise.all([
     count('posts', (x) => x.eq('post_type', 'post').eq('status', 'publish')),
