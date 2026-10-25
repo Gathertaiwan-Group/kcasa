@@ -104,9 +104,14 @@ function menuHtml(items: MenuItem[], current: string): string {
     .filter((i) => !i.parent_id)
     .map((i) => {
       const id = i.wp_id || i.id
-      const base = (i.css_classes || '').trim() || `menu-item menu-item-type-${i.object_type === 'custom' || !i.object_type ? 'custom' : 'post_type'} menu-item-object-${i.object_type || 'custom'}`
+      // WordPress nav_menu_item: optional custom classes first, then the generated ones (Walker_Nav_Menu order)
+      const custom = (i.css_classes || '').trim()
+      const ot = i.object_type || 'custom'
+      const type = ot === 'custom' ? 'custom' : ['page', 'post', 'product'].includes(ot) ? 'post_type' : 'taxonomy'
+      const base = /\bmenu-item-type-/.test(custom) ? custom : `${custom} menu-item menu-item-type-${type} menu-item-object-${ot}`.trim()
       const isCur = normPath(i.url) === cur
-      const cls = `${base} ${isCur ? 'current-menu-item page_item current_page_item ' : ''}menu-item-${id}`.replace(/\s+/g, ' ')
+      const curCls = isCur ? (ot === 'page' && i.object_id ? `current-menu-item page_item page-item-${i.object_id} current_page_item ` : 'current-menu-item ') : ''
+      const cls = `${base} ${curCls}menu-item-${id}`.replace(/\s+/g, ' ')
       return `<li id="menu-item-${id}" class="${esc(cls)}"><a href="${esc(i.url)}"${i.target ? ` target="${esc(i.target)}"` : ''} class="menu-link"${isCur ? ' aria-current="page"' : ''}><span class="ast-icon icon-arrow"></span><span class="menu-text">${esc(i.title)}</span></a></li>`
     })
     .join('')

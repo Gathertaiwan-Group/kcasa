@@ -39,17 +39,17 @@ export default async function Media({ searchParams }: { searchParams: SP }) {
       </form>
       {edit && (
         <div className="card grid2" style={{ gridTemplateColumns: '300px 1fr' }}>
-          <div>{edit.mime_type.startsWith('image/') ? <img src={edit.url} alt={edit.alt_text} style={{ width: '100%' }} /> : <a href={edit.url} target="_blank" rel="noreferrer">{edit.url}</a>}</div>
+          <div>{!edit.url ? <p className="muted">（私有附件：只匯入資料，檔案未上傳到公開空間）</p> : edit.mime_type.startsWith('image/') ? <img src={edit.url} alt={edit.alt_text} style={{ width: '100%' }} /> : <a href={edit.url} target="_blank" rel="noreferrer">{edit.url}</a>}</div>
           <form action={saveMediaAction}>
             <input type="hidden" name="id" value={edit.id} />
             <input type="hidden" name="_back" value={back} />
             <dl className="kv">
               <dt>ID</dt><dd>#{edit.id}</dd>
-              <dt>檔案網址</dt><dd><input type="text" readOnly value={edit.url} className="w100" /></dd>
+              <dt>檔案網址</dt><dd><input type="text" readOnly value={edit.url || ''} className="w100" /></dd>
               <dt>類型</dt><dd>{edit.mime_type}{edit.orig_mime_type && edit.orig_mime_type !== edit.mime_type ? `（原 ${edit.orig_mime_type}）` : ''}</dd>
               <dt>尺寸</dt><dd>{edit.width ? `${edit.width} × ${edit.height}` : '—'} · {edit.filesize ? `${Math.round(edit.filesize / 1024)} KB` : ''}</dd>
               <dt>上傳時間</dt><dd>{twDateTime(edit.published_at || edit.created_at)}</dd>
-              {edit.is_private && (<><dt>私有</dt><dd>是（舊站私有附件，等資料庫匯入）</dd></>)}
+              {edit.is_private && (<><dt>私有</dt><dd>是（舊站私有附件或未發佈商品的圖片；僅匯入資料，未上傳檔案）</dd></>)}
             </dl>
             <label>標題</label>
             <input type="text" name="title" defaultValue={edit.title} className="w100" />
@@ -68,7 +68,7 @@ export default async function Media({ searchParams }: { searchParams: SP }) {
       <div className="media-grid">
         {rows.map((m: any) => (
           <Link key={m.id} className="m" href={`/admin/media/?${new URLSearchParams({ s: search, mime, offset: String(offset), edit: String(m.id) }).toString()}`} title={m.title}>
-            {m.mime_type.startsWith('image/') ? <img src={m.url} alt={m.alt_text} loading="lazy" /> : <div className="f">{m.mime_type}</div>}
+            {m.url && m.mime_type.startsWith('image/') ? <img src={m.url} alt={m.alt_text} loading="lazy" /> : <div className="f">{m.is_private ? '私有 · ' : ''}{m.mime_type}</div>}
             <div className="c">#{m.id} {m.title}</div>
           </Link>
         ))}

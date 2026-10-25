@@ -7,7 +7,7 @@ import { requireAdmin } from '@/lib/admin/session'
 import { listMenus } from '@/lib/admin/site-ops'
 
 export const metadata = { title: '選單' }
-const LOC: Record<string, string> = { primary: '主選單（桌機）', secondary_menu: '次選單', mobile_menu: '手機選單', wp_bottom_menu: '手機底部選單' }
+const LOC: Record<string, string> = { primary: '主選單（桌機）', secondary_menu: '次選單', mobile_menu: '手機選單', footer_menu: '頁尾選單（舊站未顯示）', wp_bottom_menu: '手機底部選單' }
 
 export default async function Menus({ searchParams }: { searchParams: SP }) {
   await requireAdmin('menus')

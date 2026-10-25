@@ -106,11 +106,15 @@ async function publishDue() {
   }
 }
 
+const ARCHIVE_SETTINGS = ['astra_settings', 'rank_math_settings', 'elementor_settings', 'woocommerce_settings', 'payment_gateways', 'wpforms_settings', 'smtp_settings', 'zapier_settings']
+
 async function load(): Promise<Site> {
   const sb = svc()
   await publishDue().catch((e) => console.error('[publishDue]', e))
   const [settingsRows, media, posts, products, variations, attrValues, attributes, terms, rels, authors, menus, menuItems, comments, shipping, qtyRules, forms] = await Promise.all([
-    fetchAll<any>('settings', 'key,value', 'key'),
+    // archival WordPress option dumps (astra/rank math/elementor/woocommerce…) are admin/MCP-only; keep them out of the page cache
+    sb.from('settings').select('key,value').not('key', 'in', `(${ARCHIVE_SETTINGS.join(',')})`).order('key').limit(1000)
+      .then((r) => { if (r.error) throw new Error(`settings: ${r.error.message}`); return (r.data || []) as any[] }),
     fetchAll<Media>('media', 'id,url,width,height,alt_text,title,caption_html,mime_type,storage_path,variants'),
     fetchAll<Post>('posts', 'id,post_type,slug,path,title,content_html,excerpt_html,status,author_id,featured_media_id,parent_id,menu_order,template,builder,comment_status,seo,meta,published_at,modified_at,sticky'),
     fetchAll<Product>('products', '*'),
