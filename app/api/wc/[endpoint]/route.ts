@@ -1,19 +1,19 @@
 /** WooCommerce AJAX endpoints used by the legacy front-end scripts (?wc-ajax=… rewritten to /api/wc/…/). */
 import type { NextRequest } from 'next/server'
-import { addToCart, loadCart, removeItem } from '@/lib/cart'
+import { addToCart, cartHashOf, loadCart, removeItem, syncWcCookies } from '@/lib/cart'
 import { miniCartHtml } from '@/lib/document'
 
 export const dynamic = 'force-dynamic'
 
 async function fragments() {
   const cart = await loadCart()
-  const hash = cart.lines.map((l) => `${l.id}:${l.quantity}`).join('|')
+  await syncWcCookies(cart)
   return {
     fragments: {
       'div.widget_shopping_cart_content': `<div class="widget_shopping_cart_content">${miniCartHtml(cart)}</div>`,
       '.ast-site-header-cart .ast-count-text, .astra-cart-drawer .ast-count-text': `<span class="ast-count-text">${cart.count}</span>`,
     },
-    cart_hash: hash ? Buffer.from(hash).toString('base64url').slice(0, 32) : '',
+    cart_hash: cartHashOf(cart),
   }
 }
 

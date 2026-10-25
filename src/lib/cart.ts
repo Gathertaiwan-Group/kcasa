@@ -46,6 +46,31 @@ export async function cartKey(): Promise<string | null> {
   return c && /^[a-f0-9]{48}$/.test(c) ? c : null
 }
 
+/** WooCommerce's cart hash (sent with fragments and mirrored in the woocommerce_cart_hash cookie) */
+export function cartHashOf(cart: CartView | null): string {
+  const hash = (cart?.lines || []).map((l) => `${l.id}:${l.quantity}`).join('|')
+  return hash ? Buffer.from(hash).toString('base64url').slice(0, 32) : ''
+}
+
+/**
+ * Mirror WooCommerce's `woocommerce_items_in_cart` / `woocommerce_cart_hash` cookies. cart-fragments.js only
+ * trusts the fragments cached in sessionStorage while their hash equals this cookie; without it a page
+ * rendered after a (non-AJAX) add-to-cart got its header count overwritten by the stale cached "0".
+ */
+export async function syncWcCookies(cart?: CartView | null): Promise<void> {
+  const store = await cookies()
+  if (cart === undefined) cart = store.has(CART_COOKIE) ? await loadCart() : null
+  const hash = cart && cart.count ? cartHashOf(cart) : ''
+  const opts = { path: '/', httpOnly: false, sameSite: 'lax' as const, secure: process.env.NODE_ENV === 'production' }
+  if (hash) {
+    if (store.get('woocommerce_cart_hash')?.value !== hash) store.set('woocommerce_cart_hash', hash, opts)
+    if (store.get('woocommerce_items_in_cart')?.value !== '1') store.set('woocommerce_items_in_cart', '1', opts)
+  } else {
+    if (store.has('woocommerce_cart_hash')) store.delete('woocommerce_cart_hash')
+    if (store.has('woocommerce_items_in_cart')) store.delete('woocommerce_items_in_cart')
+  }
+}
+
 export async function ensureCart(): Promise<{ key: string; id: string }> {
   const store = await cookies()
   let key = await cartKey()

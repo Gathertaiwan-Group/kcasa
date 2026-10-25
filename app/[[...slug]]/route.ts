@@ -6,6 +6,7 @@
 import type { NextRequest } from 'next/server'
 import { handlePost } from '@/lib/actions'
 import { route, type Out } from '@/lib/router'
+import { syncWcCookies } from '@/lib/cart'
 
 export const dynamic = 'force-dynamic'
 
@@ -47,9 +48,12 @@ export async function GET(req: NextRequest) {
       target.searchParams.delete('add-to-cart')
       target.searchParams.delete('quantity')
       const r = await handlePost(target, fd)
+      await syncWcCookies()
       return respond(r.type === 'redirect' ? { ...r, to: target.pathname + target.search } : r)
     }
-    return respond(await route(url))
+    const out = await route(url)
+    if (out.type === 'html') await syncWcCookies()
+    return respond(out)
   } catch (e) {
     return errorPage(e)
   }
@@ -72,7 +76,9 @@ export async function POST(req: NextRequest) {
     const origin = req.headers.get('origin')
     if (origin && new URL(origin).host !== url.host) return new Response('Forbidden', { status: 403 })
     const fd = await req.formData()
-    return respond(await handlePost(url, fd))
+    const out = await handlePost(url, fd)
+    await syncWcCookies()
+    return respond(out)
   } catch (e) {
     return errorPage(e)
   }

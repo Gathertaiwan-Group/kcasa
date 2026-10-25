@@ -55,7 +55,17 @@ function productClasses(site: Site, p: Product, pos: string): string {
     .join(' ')
 }
 
-const THUMB_STYLE = 'aspect-ratio:4/3;object-fit:cover;width:100%;height:auto'
+/**
+ * woocommerce_thumbnail is a 600×450 hard crop, but WordPress never upscales: an image smaller than the box in
+ * one direction keeps that side (min(600,w) × min(450,h)), e.g. the edited 734×355 S163 photo → 600×355.
+ */
+function thumbSize(m: Media): [number, number] {
+  const w = Number(m.width) || 0
+  const h = Number(m.height) || 0
+  if (!w || !h) return [600, 450]
+  return [Math.min(600, w), Math.min(450, h)]
+}
+const thumbStyle = ([w, h]: [number, number]) => `aspect-ratio:${w}/${h};object-fit:cover;width:100%;height:auto`
 
 export function loopItem(site: Site, p: Product, i: number, cols: number, inContent = false): string {
   const pos = i % cols === 0 ? 'first' : i % cols === cols - 1 ? 'last' : ''
@@ -66,7 +76,7 @@ export function loopItem(site: Site, p: Product, i: number, cols: number, inCont
   const sale = num(p.sale_price) !== null && p.type !== 'variable' ? `<span class="ast-on-card-button ast-onsale-card" data-sale="sale">特價！</span>` : ''
   const lead = inContent ? 'ast-article-single desktop-align-center tablet-align-center mobile-align-center' : 'ast-col-sm-12 ast-article-post desktop-align-center tablet-align-center mobile-align-center ast-col-md-3 ast-archive-post'
   return `<li class="${lead} ast-product-gallery-layout-horizontal-slider ast-magnify-disabled${variableCls} ast-product-tabs-layout-horizontal ${productClasses(site, p, pos)}">
-	<div class="astra-shop-thumbnail-wrap">${sale}<a href="${esc(link)}" class="woocommerce-LoopProduct-link woocommerce-loop-product__link">${m ? imgTag(m, { cls: 'attachment-woocommerce_thumbnail size-woocommerce_thumbnail', alt: p.name, size: [600, 450], style: THUMB_STYLE }) : `<img width="600" height="450" src="/legacy/wp-content/plugins/woocommerce/assets/images/placeholder.png" class="woocommerce-placeholder wp-post-image" alt="預留位置" decoding="async" />`}</a></div><div class="astra-shop-summary-wrap"><a href="${esc(link)}" class="ast-loop-product__link"><h2 class="woocommerce-loop-product__title">${esc(p.name)}</h2></a>
+	<div class="astra-shop-thumbnail-wrap">${sale}<a href="${esc(link)}" class="woocommerce-LoopProduct-link woocommerce-loop-product__link">${m ? imgTag(m, { cls: 'attachment-woocommerce_thumbnail size-woocommerce_thumbnail', alt: p.name, size: thumbSize(m), style: thumbStyle(thumbSize(m)) }) : `<img width="600" height="450" src="/legacy/wp-content/plugins/woocommerce/assets/images/placeholder.png" class="woocommerce-placeholder wp-post-image" alt="預留位置" decoding="async" />`}</a></div><div class="astra-shop-summary-wrap"><a href="${esc(link)}" class="ast-loop-product__link"><h2 class="woocommerce-loop-product__title">${esc(p.name)}</h2></a>
 ${price ? `	<span class="price">${price}</span>\n` : ''}</div></li>
 `
 }
@@ -118,7 +128,7 @@ function resultCount(page: number, total: number): string {
   const first = (page - 1) * SHOP_PER_PAGE + 1
   const last = Math.min(total, page * SHOP_PER_PAGE)
   if (total === 1) return '顯示單一結果'
-  if (total <= SHOP_PER_PAGE) return `顯示全部 ${total} 項結果`
+  if (total <= SHOP_PER_PAGE) return `顯示所有 ${total} 筆結果`
   return `顯示第 ${first} 至 ${last} 項結果，共 ${total} 項`
 }
 
@@ -179,7 +189,7 @@ ${
     : `<div class="woocommerce-no-products-found">
 
 	<div class="woocommerce-info" role="status">
-		找不到符合你選擇的商品。	</div>
+		找不到符合您選擇的商品	</div>
 </div>
 `
   const main = `${CONTENT_OPEN}
@@ -475,7 +485,8 @@ export function productView(p: Product, ctx: Ctx): View {
   const variableCls = p.type === 'variable' ? ' ast-product-single-variable' : ''
   const cls = `ast-article-single ast-woo-product-no-review desktop-align-center tablet-align-center mobile-align-center ast-product-gallery-layout-horizontal-slider ast-magnify-disabled${variableCls} ast-product-tabs-layout-horizontal ${productClasses(site, p, 'first')}`
   const short = p.short_description_html.trim() ? `<div class="woocommerce-product-details__short-description">\n\t${p.short_description_html.trim()}\n</div>\n` : ''
-  const stock = p.type !== 'variable' && (p.manage_stock || p.stock_status === 'outofstock') ? stockHtml(p.stock_status !== 'outofstock', p.manage_stock ? p.stock_quantity : null) : ''
+  // WooCommerce prints the stock line from add-to-cart/simple.php, which returns early for products that are not purchasable (no price)
+  const stock = p.type !== 'variable' && p.purchasable && num(p.price) !== null && (p.manage_stock || p.stock_status === 'outofstock') ? stockHtml(p.stock_status !== 'outofstock', p.manage_stock ? p.stock_quantity : null) : ''
   const sale = num(p.sale_price) !== null && p.type !== 'variable' ? '<span class="onsale">特價！</span>\n' : ''
   const main = `${CONTENT_OPEN}
 				<div id="primary" class="content-area primary">
