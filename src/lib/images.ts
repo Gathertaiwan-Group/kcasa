@@ -60,7 +60,7 @@ const q = (v: string) => v.replace(/&(?![a-zA-Z]+;|#\d+;|#x[0-9a-fA-F]+;)/g, '&a
 const unq = (v: string) => v.replace(/&amp;/g, '&').replace(/&#0?38;/g, '&').replace(/&quot;/g, '"')
 
 /** srcset + width/height for one bucket image (null if the src is not a bucket image with known dimensions) */
-export function srcsetFor(site: Site, src: string): { srcset: string; w: number; h: number } | null {
+export function srcsetFor(site: Site, src: string): { srcset: string; w: number; h: number; pick: (slot: number) => string } | null {
   const base = bucketBase()
   if (!src.startsWith(base)) return null
   const key = safeDecode(src.slice(base.length).split(/[?#]/)[0])
@@ -68,7 +68,12 @@ export function srcsetFor(site: Site, src: string): { srcset: string; w: number;
   if (!e || !e.w || !e.h) return null
   const parts = e.variants.filter((v) => v.w < (e.w as number)).map((v) => `${publicPath(v.path)} ${v.w}w`)
   parts.push(`${src} ${e.w}w`)
-  return { srcset: parts.join(', '), w: e.w, h: e.h }
+  const vs = e.variants.filter((v) => v.w < (e.w as number))
+  const pick = (slot: number) => {
+    const v = vs.find((x) => x.w >= slot)
+    return v ? publicPath(v.path) : src
+  }
+  return { srcset: parts.join(', '), w: e.w, h: e.h, pick }
 }
 
 /**
@@ -107,8 +112,12 @@ export function responsiveImages(site: Site, html: string, opts: { eagerBefore?:
       eager = true
       set('fetchpriority', 'high')
     }
-    const sizes = sizesFor(html, offset, get('class') || '', w)
+    const { sizes, slot } = sizesFor(html, offset, get('class') || '', w)
     set('sizes', sizes)
+    // src = the variant a desktop browser picks anyway: scripts that read img.src before the lazy image loaded
+    // (imagesLoaded in Elementor galleries/posts, lightboxes) would otherwise download the full original
+    const fallback = info.pick(slot)
+    if (fallback !== src) set('src', fallback)
     if (eager) set('loading', null)
     else set('loading', 'lazy')
     set('decoding', 'async')
@@ -123,13 +132,13 @@ export function responsiveImages(site: Site, html: string, opts: { eagerBefore?:
  */
 const SMALL_CTX = /elementor-post__thumbnail|gallery-icon|gallery-item|woocommerce-LoopProduct-link|ast-woocommerce-product-gallery__image|mini_cart_item|elementor-image-carousel|swiper-slide/
 const SMALL_CLS = /\b(size-medium|size-thumbnail|attachment-medium|attachment-thumbnail|size-woocommerce_thumbnail|size-woocommerce_gallery_thumbnail|size-100x100|avatar)\b/
-export function sizesFor(html: string, offset: number, cls: string, w: number): string {
+export function sizesFor(html: string, offset: number, cls: string, w: number): { sizes: string; slot: number } {
   const near = html.slice(Math.max(0, offset - 600), offset)
   const cols = Number(html.slice(Math.max(0, offset - 1500), offset).match(/gallery-columns-(\d)(?![\s\S]*gallery-columns-)/)?.[1] || 0)
   let slot = Math.min(w, 1440)
   if (cols > 1) slot = Math.min(slot, Math.ceil(1200 / cols))
   else if (SMALL_CLS.test(cls) || SMALL_CTX.test(near)) slot = Math.min(slot, 480)
-  return `(max-width: 767px) 100vw, ${slot}px`
+  return { sizes: `(max-width: 767px) 100vw, ${slot}px`, slot }
 }
 
 function render(attrs: [string, string | null][]): string {
