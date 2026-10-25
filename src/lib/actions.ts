@@ -12,6 +12,7 @@ import { svc } from './sb'
 import { purgePublicPages } from './page-cache'
 import { getSite, invalidateSite } from './site'
 import { esc, normPath, siteUrl } from './util'
+import { verifyWpformsToken } from './wpforms-token'
 import { BILLING_FIELDS, PAYMENT, SHIPPING_FIELDS } from './views/checkout'
 
 type F = Record<string, string>
@@ -337,6 +338,11 @@ async function wpforms(url: URL, f: F): Promise<Out> {
   const backTo = url.pathname
   if (!form) return back(backTo)
   if (f['wpforms[hp]']) return back(backTo) // honeypot
+  // anti-spam token issued by /api/wp/admin-ajax/ (action=wpforms_get_token) and stamped on the rendered form
+  if (!verifyWpformsToken(formId, f['wpforms[token]'])) {
+    await pushNotice({ type: 'error', html: '表單驗證已過期，請重新整理頁面後再送出。' })
+    return back(backTo + `#wpforms-${formId}`)
+  }
   const data: Record<string, any> = {}
   const errs: string[] = []
   for (const fld of form.fields || []) {

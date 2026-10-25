@@ -5,6 +5,8 @@ import { responsiveImages } from './images'
 import { renderSeo } from './seo'
 import type { Site } from './site'
 import { esc, money } from './util'
+import { trackingEnabled } from './tracking'
+import { stampWpformsTokens } from './wpforms-token'
 import type { View } from './views/common'
 import { productCategoriesList } from './views/shop'
 
@@ -74,7 +76,7 @@ ${view.headExtra || ''}
 
 <body ${rec.bodyAttrs} class="${esc(bodyClass)}">
 ${renderPre(rec, chrome)}
-${view.main}
+${stampWpformsTokens(view.main)}
 ${suf}
 ${view.footExtra || ''}
 </body>
@@ -108,7 +110,7 @@ export function applySiteSettings(site: Site, html: string): string {
   swap(o.google_ads, t.google_ads?.ids?.[0])
   swap(o.adsense, t.adsense?.publisher_id)
   const c = s.tracking_custom || {}
-  if (c.enabled !== false && process.env.DISABLE_TRACKING !== '1') {
+  if (c.enabled !== false && trackingEnabled()) {
     if (c.head_html) html = html.replace('</head>', `${c.head_html}\n</head>`)
     if (c.body_html) html = html.replace(/<\/body>\s*<\/html>\s*$/, `${c.body_html}\n</body>\n</html>\n`)
   }

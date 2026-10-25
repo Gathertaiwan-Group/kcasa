@@ -150,7 +150,7 @@ for s in sp:
     products.append(dict(id=s['id'],slug=w['slug'],name=html.unescape(s['name']),type=s['type'],status=w['status'],
         featured='featured' in w.get('class_list',[]),catalog_visibility='visible',sku=s['sku'] or '',
         description_html=rw(s['description']),short_description_html=rw(s['short_description']),
-        regular_price=money(pr.get('regular_price')),sale_price=money(pr.get('sale_price')) if s['on_sale'] else None,price=money(pr.get('price')),
+        regular_price=None if s['type']=='variable' else money(pr.get('regular_price')),sale_price=money(pr.get('sale_price')) if s['on_sale'] and s['type']!='variable' else None,price=money(pr.get('price')),
         price_min=money(rng.get('min_amount')) if rng else money(pr.get('price')),price_max=money(rng.get('max_amount')) if rng else money(pr.get('price')),
         currency=pr.get('currency_code') or 'TWD',manage_stock=ms,stock_quantity=qty,stock_status=st if s['is_in_stock'] else 'outofstock',
         backorders='notify' if s.get('is_on_backorder') else 'no',sold_individually=bool(s['sold_individually']),

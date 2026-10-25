@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /** URL → view, following the old WordPress permalink structure of kcasa.pro. */
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import { customerFor, currentUser } from './auth'
 import { loadCart, removeItem, updateCartMeta } from './cart'
 import { renderDocument } from './document'
@@ -8,6 +8,7 @@ import { robotsTxt, rss, sitemapIndex, sitemapXml } from './feeds'
 import { fetchAll } from './sb'
 import { getSite, seenContentVersion, type Post, type Site } from './site'
 import { normPath } from './util'
+import { withTracking } from './tracking'
 import { accountView, loginView, lostPasswordView, registerView } from './views/account'
 import { cartView, checkoutView, orderReceivedView } from './views/checkout'
 import type { Ctx, Notice, View } from './views/common'
@@ -89,6 +90,13 @@ function html(view: View, site: Site, cart: Awaited<ReturnType<typeof loadCart>>
 }
 
 export async function route(url: URL): Promise<Out> {
+  // the visitor-facing host (route handlers may see the internal origin in req.url)
+  const h = await headers()
+  const host = (h.get('x-forwarded-host') || h.get('host') || url.host).split(',')[0].trim()
+  return withTracking(host, () => routeUrl(url))
+}
+
+async function routeUrl(url: URL): Promise<Out> {
   const rawPath = url.pathname
   const last = rawPath.slice(rawPath.lastIndexOf('/') + 1)
   // WordPress adds the trailing slash with a 301
@@ -196,6 +204,8 @@ export async function route(url: URL): Promise<Out> {
       return { type: 'redirect', to: '/checkout/', status: 303 }
     }
     cart = cart || (await loadCart())
+    // WooCommerce (woocommerce_checkout_redirect_empty_cart) sends an empty-cart checkout to the cart page
+    if (!cart.lines.length) return { type: 'redirect', to: '/cart/', status: 302 }
     const user = await currentUser()
     let prefill: Record<string, string> = {}
     if (user) {

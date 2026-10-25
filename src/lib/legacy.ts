@@ -7,6 +7,7 @@
 import legacyJson from '@/generated/legacy.json'
 import { esc, normPath } from './util'
 import type { MenuItem } from './site'
+import { trackingEnabled } from './tracking'
 
 type Item = { t: 'html'; v: string } | { t: 'css' | 'style'; id: string; href: string; media: string } | { t: 'js'; id: string; src: string; attrs: Record<string, string>; raw_attrs: string } | { t: 'jsinline'; id: string; src: string; type: string }
 type PageRec = { bodyClass: string; bodyAttrs: string; head: string; pre: string; suf: string; status: number }
@@ -48,15 +49,16 @@ export function hasRecord(path: string) {
 // replaced by full-page form posts (cart/checkout) handled server-side
 const SKIP_SCRIPT_IDS = new Set(['wc-cart-js', 'astra-single-product-ajax-cart-js', 'wc-checkout-js'])
 const TRACKING_RE = /googletagmanager\.com|googlesyndication\.com|google_gtagjs|doubleclick/
-const tracking = () => process.env.DISABLE_TRACKING !== '1'
+const tracking = trackingEnabled
 
-function renderItems(items: Item[], opts: { skipTracking?: boolean } = {}): string {
+function renderItems(items: Item[], _opts: { skipTracking?: boolean } = {}): string {
+  void _opts
   let out = ''
   for (const it of items) {
     switch (it.t) {
       case 'html': {
         let v = it.v
-        if (opts.skipTracking && !tracking()) v = v.replace(/<noscript>\s*<iframe src="https:\/\/www\.googletagmanager\.com[\s\S]*?<\/noscript>/g, '')
+        if (!tracking()) v = v.replace(/<noscript>\s*<iframe src="https:\/\/www\.googletagmanager\.com[\s\S]*?<\/noscript>/g, '')
         out += v + '\n'
         break
       }
