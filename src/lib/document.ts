@@ -1,6 +1,7 @@
 /** Assemble a full HTML document: captured head + SEO, Astra header chrome, rendered #content, captured footer. */
 import type { CartView } from './cart'
 import { legacyRecord, renderHead, renderPre, renderSuf, type Chrome } from './legacy'
+import { responsiveImages } from './images'
 import { renderSeo } from './seo'
 import type { Site } from './site'
 import { esc, money } from './util'
@@ -64,7 +65,7 @@ export function renderDocument(site: Site, view: View, cart: CartView | null, pa
   const headFinal = headHtml === head ? '<meta charset="UTF-8">\n' + seo + '\n' + head : headHtml
   let suf = renderSuf(rec, chrome)
   suf = suf.replace(/<ul class="wc-block-product-categories-list wc-block-product-categories-list--depth-0">[\s\S]*?<\/ul>/, productCategoriesList(site))
-  return applySiteSettings(site, `<!DOCTYPE html>
+  const doc = applySiteSettings(site, `<!DOCTYPE html>
 <html lang="zh-TW" prefix="og: https://ogp.me/ns#">
 <head>
 ${headFinal}<link rel='stylesheet' id='kc-site-css' href='/kc/kc.css?v=1' media='all' />
@@ -79,6 +80,9 @@ ${view.footExtra || ''}
 </body>
 </html>
 `)
+  // header chrome (logo) stays eager; the first image inside #content is the above-the-fold image
+  const contentAt = doc.indexOf('<div id="content"')
+  return responsiveImages(site, doc, { eagerBefore: contentAt >= 0 ? contentAt : 0 })
 }
 
 /**

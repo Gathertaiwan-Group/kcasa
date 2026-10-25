@@ -83,7 +83,9 @@ function wcPage(site: Site, id: number, slug: string): Post {
 }
 
 function html(view: View, site: Site, cart: Awaited<ReturnType<typeof loadCart>> | null, path: string): Out {
-  return { type: 'html', status: view.status, body: renderDocument(site, view, cart, path), private: true }
+  // per-visitor pages never go to the shared CDN cache
+  const priv = view.cache === 'private' || !!cart || /^\/(cart|checkout|my-account)\//.test(path)
+  return { type: 'html', status: view.status, body: renderDocument(site, view, cart, path), private: priv }
 }
 
 export async function route(url: URL): Promise<Out> {

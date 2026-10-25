@@ -7,10 +7,18 @@ import type { NextRequest } from 'next/server'
 import { handlePost } from '@/lib/actions'
 import { route, type Out } from '@/lib/router'
 import { syncWcCookies } from '@/lib/cart'
+import { PAGE_CACHE_TAG, PRIVATE_PARAM, hasPrivateCookies } from '@/lib/page-cache'
 
 export const dynamic = 'force-dynamic'
 
-function respond(o: Out, head = false): Response {
+/**
+ * Public pages are cached on the Vercel CDN (5 min fresh, then stale-while-revalidate; admin/MCP writes purge the
+ * PAGE_CACHE_TAG). Browsers always revalidate. Visitors with a cart / notice / login cookie are routed around the
+ * CDN cache by proxy.ts and get private, uncached pages.
+ */
+const PUBLIC_HTML = { 'Cache-Control': 'public, max-age=0, must-revalidate', 'Vercel-CDN-Cache-Control': 'max-age=300, stale-while-revalidate=86400', 'Vercel-Cache-Tag': PAGE_CACHE_TAG }
+
+function respond(o: Out, head = false, cacheable = false): Response {
   if (o.type === 'redirect') {
     return new Response(null, { status: o.status, headers: { Location: encodeURI(decodeURISafe(o.to)), 'Cache-Control': 'no-store' } })
   }
@@ -19,7 +27,7 @@ function respond(o: Out, head = false): Response {
   }
   return new Response(head ? null : o.body, {
     status: o.status,
-    headers: { 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': 'private, no-store'},
+    headers: { 'Content-Type': 'text/html; charset=UTF-8', ...(cacheable && !o.private && (o.status === 200 || o.status === 404) ? PUBLIC_HTML : { 'Cache-Control': 'private, no-store' }) },
   })
 }
 
@@ -36,9 +44,17 @@ function errorPage(e: unknown): Response {
   return new Response('<!DOCTYPE html><html lang="zh-TW"><meta charset="utf-8"><title>暫時無法顯示 - Kcasa 工富家飾</title><body style="font-family:sans-serif;padding:3em;text-align:center"><h1>網站暫時無法顯示</h1><p>請稍後再試。</p></body></html>', { status: 503, headers: { 'Content-Type': 'text/html; charset=UTF-8', 'Cache-Control': 'no-store', 'Retry-After': '30' } })
 }
 
+/** request URL without proxy.ts' cache-bypass marker; cacheable = no per-visitor cookie */
+function requestUrl(req: NextRequest): { url: URL; cacheable: boolean } {
+  const url = new URL(req.url)
+  const marked = url.searchParams.has(PRIVATE_PARAM)
+  url.searchParams.delete(PRIVATE_PARAM)
+  return { url, cacheable: !marked && !hasPrivateCookies(req.cookies.getAll().map((c) => c.name)) }
+}
+
 export async function GET(req: NextRequest) {
   try {
-    const url = new URL(req.url)
+    const { url, cacheable } = requestUrl(req)
     // WooCommerce ?add-to-cart=ID links (non-AJAX fallback)
     if (url.searchParams.get('add-to-cart')) {
       const fd = new FormData()
@@ -53,7 +69,7 @@ export async function GET(req: NextRequest) {
     }
     const out = await route(url)
     if (out.type === 'html') await syncWcCookies()
-    return respond(out)
+    return respond(out, false, cacheable)
   } catch (e) {
     return errorPage(e)
   }
@@ -61,7 +77,8 @@ export async function GET(req: NextRequest) {
 
 export async function HEAD(req: NextRequest) {
   try {
-    return respond(await route(new URL(req.url)), true)
+    const { url, cacheable } = requestUrl(req)
+    return respond(await route(url), true, cacheable)
   } catch (e) {
     return errorPage(e)
   }

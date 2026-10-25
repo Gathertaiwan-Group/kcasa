@@ -7,7 +7,7 @@
 import { fetchAll, svc } from './sb'
 import { normPath } from './util'
 
-export type Media = { id: number; url: string; width: number | null; height: number | null; alt_text: string; title: string; caption_html: string; mime_type: string }
+export type Media = { id: number; url: string; width: number | null; height: number | null; alt_text: string; title: string; caption_html: string; mime_type: string; storage_path?: string | null; variants?: { w: number; h: number; path: string }[] }
 export type Post = {
   id: number; post_type: string; slug: string; path: string | null; title: string; content_html: string; excerpt_html: string; status: string
   author_id: number | null; featured_media_id: number | null; parent_id: number | null; menu_order: number; template: string; builder: string | null
@@ -111,7 +111,7 @@ async function load(): Promise<Site> {
   await publishDue().catch((e) => console.error('[publishDue]', e))
   const [settingsRows, media, posts, products, variations, attrValues, attributes, terms, rels, authors, menus, menuItems, comments, shipping, qtyRules, forms] = await Promise.all([
     fetchAll<any>('settings', 'key,value', 'key'),
-    fetchAll<Media>('media', 'id,url,width,height,alt_text,title,caption_html,mime_type'),
+    fetchAll<Media>('media', 'id,url,width,height,alt_text,title,caption_html,mime_type,storage_path,variants'),
     fetchAll<Post>('posts', 'id,post_type,slug,path,title,content_html,excerpt_html,status,author_id,featured_media_id,parent_id,menu_order,template,builder,comment_status,seo,meta,published_at,modified_at,sticky'),
     fetchAll<Product>('products', '*'),
     fetchAll<Variation>('product_variations', '*'),

@@ -3,6 +3,7 @@
 import { attrKey, discountedUnit, purchasable, rulesFor, unitPrice } from '../cart'
 import { fromStored, type Seo } from '../seo'
 import { img, productLink, termLink, termsOf, visibleProducts, type Media, type Product, type Site, type Term, type Variation } from '../site'
+import { variantUrl } from '../images'
 import { esc, fmtNumber, money, num, stripTags } from '../util'
 import { CONTENT_CLOSE, CONTENT_OPEN, imgTag, noticesHtml, paginateLinks, pagedUrl, type Ctx, type View } from './common'
 
@@ -309,7 +310,7 @@ function galleryHtml(site: Site, p: Product): string {
   const main = ms
     .map((m, i) => {
       const alt = i === 0 ? p.name : `${p.name}：圖片 ${i + 1}`
-      return `<div data-thumb="${esc(m.url)}" data-thumb-alt="${esc(alt)}" data-thumb-srcset="" data-thumb-sizes="(max-width: 150px) 100vw, 150px" class="woocommerce-product-gallery__image"><a href="${esc(m.url)}"><img width="600" height="${h600(m)}" src="${esc(m.url)}" class="${i === 0 ? 'wp-post-image' : ''}" alt="${esc(alt)}" data-caption="${esc(stripTags(m.caption_html || ''))}" data-src="${esc(m.url)}" data-large_image="${esc(m.url)}" data-large_image_width="${m.width || 1200}" data-large_image_height="${m.height || 1200}" decoding="async" /></a></div>`
+      return `<div data-thumb="${esc(variantUrl(m, 150))}" data-thumb-alt="${esc(alt)}" data-thumb-srcset="" data-thumb-sizes="(max-width: 150px) 100vw, 150px" class="woocommerce-product-gallery__image"><a href="${esc(m.url)}"><img width="600" height="${h600(m)}" src="${esc(m.url)}" class="${i === 0 ? 'wp-post-image' : ''}" alt="${esc(alt)}" data-caption="${esc(stripTags(m.caption_html || ''))}" data-src="${esc(m.url)}" data-large_image="${esc(m.url)}" data-large_image_width="${m.width || 1200}" data-large_image_height="${m.height || 1200}" decoding="async" /></a></div>`
     })
     .join('')
   const thumbs =
@@ -318,7 +319,7 @@ function galleryHtml(site: Site, p: Product): string {
 			<div class="ast-single-product-thumbnails
 		">
 			<div class="woocommerce-product-gallery-thumbnails__wrapper">
-				${ms.map((m, i) => `<div data-slide-number="${i}" data-thumb="${esc(m.url)}" data-thumb-alt="" class="ast-woocommerce-product-gallery__image ${i === 0 ? 'flex-active-slide' : ''}"><img width="100" height="100" src="${esc(m.url)}" class="attachment-100x100 size-100x100" alt="" data-original-src="${esc(m.url)}" style="object-fit:cover;aspect-ratio:1/1" /></div>`).join('')}			</div>
+				${ms.map((m, i) => `<div data-slide-number="${i}" data-thumb="${esc(variantUrl(m, 150))}" data-thumb-alt="" class="ast-woocommerce-product-gallery__image ${i === 0 ? 'flex-active-slide' : ''}"><img width="100" height="100" src="${esc(m.url)}" class="attachment-100x100 size-100x100" alt="" data-original-src="${esc(m.url)}" style="object-fit:cover;aspect-ratio:1/1" /></div>`).join('')}			</div>
 		</div>
 `
       : ''

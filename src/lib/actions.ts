@@ -9,6 +9,7 @@ import { authClient, currentUser, customerFor } from './auth'
 import { addToCart, applyCoupon, clearCart, loadCart, setQuantities, updateCartMeta } from './cart'
 import { pushNotice, type Out } from './router'
 import { svc } from './sb'
+import { purgePublicPages } from './page-cache'
 import { getSite, invalidateSite } from './site'
 import { esc, normPath, siteUrl } from './util'
 import { BILLING_FIELDS, PAYMENT, SHIPPING_FIELDS } from './views/checkout'
@@ -191,6 +192,7 @@ async function placeOrder(f: F): Promise<Out> {
   }
   if (cart.cartId) await clearCart(cart.cartId)
   invalidateSite()
+  await purgePublicPages() // stock / sales counts on product pages
   return back(`/checkout/order-received/${order.id}/?key=${order.order_key}`)
 }
 

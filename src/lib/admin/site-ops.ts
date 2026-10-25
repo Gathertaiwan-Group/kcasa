@@ -10,6 +10,37 @@ export const MEDIA_MAX_EDGE = 2000
 const CONVERT = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/tiff', 'image/bmp'])
 const ALLOWED = new Set([...CONVERT, 'image/gif', 'video/mp4', 'video/webm', 'video/quicktime', 'application/pdf'])
 
+/** responsive WebP widths (q75, never upscaled), stored at v/<width>/<storage path>.webp */
+export const VARIANT_WIDTHS = [480, 960, 1440]
+const IMMUTABLE = 'public, max-age=31536000, immutable'
+
+export function variantPath(storagePath: string, w: number) {
+  return `v/${w}/${storagePath.replace(/\.[^./]+$/, '')}.webp`
+}
+
+async function putObject(path: string, body: Buffer, contentType: string) {
+  const r = await fetch(`${process.env.SUPABASE_URL}/storage/v1/object/${BUCKET}/${path.split('/').map(encodeURIComponent).join('/')}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`, apikey: process.env.SUPABASE_SERVICE_ROLE_KEY!, 'Content-Type': contentType, 'x-upsert': 'true', 'cache-control': IMMUTABLE },
+    body: new Uint8Array(body),
+  })
+  if (!r.ok) throw new OpError(`storage upload ${path}: ${r.status} ${(await r.text()).slice(0, 200)}`, 500)
+}
+
+/** generate + upload the responsive variants of a converted image; returns the media.variants value */
+async function makeVariants(source: Buffer, storagePath: string, width: number): Promise<{ w: number; h: number; path: string; bytes: number }[]> {
+  const sharp = (await import('sharp')).default
+  const out: { w: number; h: number; path: string; bytes: number }[] = []
+  for (const w of VARIANT_WIDTHS) {
+    if (w >= width) continue
+    const v = await sharp(source, { failOn: 'none' }).rotate().resize({ width: w, withoutEnlargement: true }).webp({ quality: 75 }).toBuffer({ resolveWithObject: true })
+    const path = variantPath(storagePath, w)
+    await putObject(path, v.data, 'image/webp')
+    out.push({ w: v.info.width, h: v.info.height, path, bytes: v.data.length })
+  }
+  return out
+}
+
 export function publicUrl(path: string) {
   return `${process.env.SUPABASE_URL}/storage/v1/object/public/${BUCKET}/${path.split('/').map(encodeURIComponent).join('/')}`
 }
@@ -100,6 +131,14 @@ export async function uploadMedia(actor: Actor, file: { buffer: Buffer; filename
   const path = await freePath(dir, stem, outMime === 'image/webp' ? 'webp' : extFor(mime, file.filename))
   const up = await svc().storage.from(BUCKET).upload(path, body, { contentType: outMime, upsert: false, cacheControl: '31536000' })
   if (up.error) throw new OpError(`storage upload: ${up.error.message}`, 500)
+  let variants: Awaited<ReturnType<typeof makeVariants>> = []
+  if (outMime === 'image/webp' && width) {
+    try {
+      variants = await makeVariants(file.buffer, path, width)
+    } catch (e) {
+      console.error('[media] variants', e) // the page falls back to the full image
+    }
+  }
   const url = publicUrl(path)
   const row = {
     slug: stem.toLowerCase(),
@@ -118,6 +157,7 @@ export async function uploadMedia(actor: Actor, file: { buffer: Buffer; filename
     orig_width: origW,
     orig_height: origH,
     orig_filesize: file.buffer.length,
+    variants,
     sha1,
     parent_id: extra.parent_id ?? null,
     published_at: now.toISOString(),
@@ -125,7 +165,7 @@ export async function uploadMedia(actor: Actor, file: { buffer: Buffer; filename
   }
   const ins = await svc().from('media').insert(row).select('*').single()
   if (ins.error) {
-    await svc().storage.from(BUCKET).remove([path])
+    await svc().storage.from(BUCKET).remove([path, ...variants.map((v) => v.path)])
     throw new OpError(`media insert: ${ins.error.message}`, 500)
   }
   await audit(actor, 'media.upload', 'media', ins.data.id, null, { storage_path: path, mime_type: outMime, filesize: body.length, orig_filesize: file.buffer.length })
@@ -175,7 +215,10 @@ export async function deleteMedia(actor: Actor, id: number) {
   must(await svc().from('media').delete().eq('id', id), 'media delete')
   if (before.storage_path) {
     const { data } = await svc().from('media').select('id').eq('storage_path', before.storage_path).limit(1)
-    if (!data || !data.length) await svc().storage.from(BUCKET).remove([before.storage_path])
+    if (!data || !data.length) {
+      const variants = Array.isArray(before.variants) ? before.variants.map((v: any) => v?.path).filter(Boolean) : []
+      await svc().storage.from(BUCKET).remove([before.storage_path, ...variants])
+    }
   }
   await audit(actor, 'media.delete', 'media', id, { storage_path: before.storage_path, title: before.title, url: before.url }, null)
   await touched()

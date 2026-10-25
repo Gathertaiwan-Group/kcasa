@@ -7,6 +7,7 @@
 import { svc } from '../sb'
 import { bumpContentVersion } from '../site'
 import { invalidateRouterCaches } from '../router'
+import { purgePublicPages } from '../page-cache'
 
 export type Actor = { email: string; id?: string | null; via: 'admin' | 'mcp' | 'system'; role?: string }
 
@@ -71,6 +72,7 @@ export function diff(before: Record<string, any> | null, after: Record<string, a
 export async function touched() {
   invalidateRouterCaches()
   await bumpContentVersion().catch((e) => console.error('[touched]', e))
+  await purgePublicPages()
 }
 
 export function pick<T extends Record<string, any>>(obj: T, keys: readonly string[]): Partial<T> {
