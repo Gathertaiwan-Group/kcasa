@@ -170,7 +170,9 @@ for s in sp:
     for mo,v in enumerate(s['variations']):
         x=sv.get(str(v['id']))
         if not x: continue
-        vp=x['prices']; vms,vq,vst=stock(x['stock_availability'])
+        vp=dict(x['prices']); vms,vq,vst=stock(x['stock_availability'])
+        if not x.get('price_html') and not x['is_purchasable'] and vp.get('price') in ('0',''):  # WC Store API reports empty _price/_regular_price as '0'
+            vp.update(price=None,regular_price=None,sale_price=None)
         img=x['images'][0]['id'] if x['images'] and x['images'][0]['id'] in mediaids else None
         variations.append(dict(id=x['id'],product_id=s['id'],sku=x['sku'] or '',attributes=v['attributes'],description_html=rw(x['description']),
             status='publish',regular_price=money(vp.get('regular_price')),sale_price=money(vp.get('sale_price')) if x['on_sale'] else None,price=money(vp.get('price')),

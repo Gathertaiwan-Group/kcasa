@@ -5,6 +5,7 @@ import { Badge, money, Notice, type SP } from '@/components/admin/ui'
 import { twDateTime } from '@/lib/admin/core'
 import { getCustomer, ORDER_STATUSES } from '@/lib/admin/shop'
 import { requireAdmin } from '@/lib/admin/session'
+import { idParam, orNotFound } from '@/lib/admin/notfound'
 
 export const metadata = { title: '顧客資料' }
 const ADDR: [string, string][] = [['last_name', '姓'], ['first_name', '名'], ['company', '公司'], ['address_1', '地址'], ['address_2', '地址 2'], ['city', '鄉鎮市區'], ['state', '縣市'], ['postcode', '郵遞區號'], ['country', '國家'], ['phone', '電話'], ['email', 'Email']]
@@ -13,7 +14,7 @@ export default async function CustomerDetail({ params, searchParams }: { params:
   await requireAdmin('orders')
   const { id } = await params
   const q = await searchParams
-  const c = await getCustomer(Number(id))
+  const c = await orNotFound(getCustomer(idParam(id)))
   return (
     <>
       <h1>{c.display_name || c.email} <Link className="btn" href="/admin/customers/">返回列表</Link></h1>

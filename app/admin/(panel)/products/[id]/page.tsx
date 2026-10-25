@@ -9,6 +9,7 @@ import { listTerms } from '@/lib/admin/content'
 import { isoToTwLocal, twDateTime } from '@/lib/admin/core'
 import { getProduct } from '@/lib/admin/shop'
 import { requireAdmin } from '@/lib/admin/session'
+import { idParam, orNotFound } from '@/lib/admin/notfound'
 import { editorStyles } from '@/lib/legacy'
 import { svc } from '@/lib/sb'
 
@@ -18,7 +19,7 @@ export default async function EditProduct({ params, searchParams }: { params: Pr
   await requireAdmin('shop')
   const { id } = await params
   const q = await searchParams
-  const p = await getProduct(Number(id))
+  const p = await orNotFound(getProduct(idParam(id)))
   const [cats, tags] = await Promise.all([listTerms('product_cat'), listTerms('product_tag')])
   const mids = [p.featured_media_id, ...(p.gallery_media_ids || []), ...p.variations.map((v: any) => v.image_id)].filter(Boolean)
   const urls = new Map<number, string>()

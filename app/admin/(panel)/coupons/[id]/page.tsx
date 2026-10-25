@@ -7,6 +7,7 @@ import { listTerms } from '@/lib/admin/content'
 import { isoToTwLocal } from '@/lib/admin/core'
 import { getCoupon } from '@/lib/admin/shop'
 import { requireAdmin } from '@/lib/admin/session'
+import { idParam, orNotFound } from '@/lib/admin/notfound'
 
 export const metadata = { title: '優惠券' }
 
@@ -15,7 +16,7 @@ export default async function CouponEdit({ params, searchParams }: { params: Pro
   const { id } = await params
   const q = await searchParams
   const isNew = id === 'new'
-  const c: any = isNew ? { discount_type: 'fixed_cart', amount: 0, status: 'publish', product_ids: [], excluded_product_ids: [], product_category_ids: [], excluded_category_ids: [], email_restrictions: [] } : await getCoupon(Number(id))
+  const c: any = isNew ? { discount_type: 'fixed_cart', amount: 0, status: 'publish', product_ids: [], excluded_product_ids: [], product_category_ids: [], excluded_category_ids: [], email_restrictions: [] } : await orNotFound(getCoupon(idParam(id)))
   const cats = await listTerms('product_cat')
   return (
     <>

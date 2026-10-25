@@ -8,6 +8,7 @@ import { Badge, decode, Notice, type SP } from '@/components/admin/ui'
 import { getContent, listTerms } from '@/lib/admin/content'
 import { isoToTwLocal, twDateTime } from '@/lib/admin/core'
 import { requireAdmin } from '@/lib/admin/session'
+import { idParam, orNotFound } from '@/lib/admin/notfound'
 import { editorStyles } from '@/lib/legacy'
 import { svc } from '@/lib/sb'
 
@@ -17,7 +18,7 @@ export default async function EditContent({ params, searchParams }: { params: Pr
   await requireAdmin('content')
   const { id } = await params
   const q = await searchParams
-  const p = await getContent(Number(id))
+  const p = await orNotFound(getContent(idParam(id)))
   const isPost = p.post_type === 'post'
   const isPage = p.post_type === 'page'
   const [cats, tags, featured, parents] = await Promise.all([

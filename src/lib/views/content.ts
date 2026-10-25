@@ -307,6 +307,6 @@ ${CONTENT_CLOSE}`
     kind: '404',
     legacyPath: '/this-page-does-not-exist-404/',
     main,
-    seo: { title: `找不到頁面 - ${SITE_NAME}`, canonical: null, meta: [{ k: 'name', n: 'robots', c: 'follow, noindex' }, { k: 'property', n: 'og:locale', c: 'zh_TW' }, { k: 'property', n: 'og:title', c: `找不到頁面 - ${SITE_NAME}` }, { k: 'property', n: 'og:site_name', c: SITE_NAME }] },
+    seo: { title: `Page Not Found - ${SITE_NAME}`, canonical: null, meta: [{ k: 'name', n: 'robots', c: 'follow, noindex' }, { k: 'property', n: 'og:locale', c: 'zh_TW' }, { k: 'property', n: 'og:title', c: `Page Not Found - ${SITE_NAME}` }, { k: 'property', n: 'og:site_name', c: SITE_NAME }] },
   }
 }
