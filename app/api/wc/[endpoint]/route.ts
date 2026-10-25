@@ -2,15 +2,20 @@
 import type { NextRequest } from 'next/server'
 import { addToCart, cartHashOf, loadCart, removeItem, syncWcCookies } from '@/lib/cart'
 import { miniCartHtml } from '@/lib/document'
+import { responsiveImages } from '@/lib/images'
+import { getSite } from '@/lib/site'
 
 export const dynamic = 'force-dynamic'
 
 async function fragments() {
   const cart = await loadCart()
   await syncWcCookies(cart)
+  // drawer / dropdown thumbnails: same responsive WebP variants (srcset) as the rest of the storefront, lazy-loaded
+  const site = await getSite()
+  const mini = responsiveImages(site, miniCartHtml(cart), { lcp: false })
   return {
     fragments: {
-      'div.widget_shopping_cart_content': `<div class="widget_shopping_cart_content">${miniCartHtml(cart)}</div>`,
+      'div.widget_shopping_cart_content': `<div class="widget_shopping_cart_content">${mini}</div>`,
       '.ast-site-header-cart .ast-count-text, .astra-cart-drawer .ast-count-text': `<span class="ast-count-text">${cart.count}</span>`,
     },
     cart_hash: cartHashOf(cart),

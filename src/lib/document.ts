@@ -36,6 +36,16 @@ export function miniCartHtml(cart: CartView | null): string {
 `
 }
 
+/**
+ * Astra's header builder here has no cart in the mobile header, so phones had no way to reach the off-canvas
+ * drawer (#astra-mobile-cart-drawer, opened by Astra's mobile-cart.js on click of `.ast-mobile-header-wrap .ast-header-woo-cart`).
+ * Adds the same cart element Astra prints for a mobile header cart, just before the menu toggle.
+ */
+function withMobileCart(html: string, count: number): string {
+  const cart = `<div class="ast-builder-layout-element site-header-focus-item ast-header-woo-cart kc-mobile-cart" data-section="section-header-woo-cart"> <div class="ast-site-header-cart ast-menu-cart-with-border ast-menu-cart-outline"> <div class="ast-site-header-cart-li "> <a href="/cart/" class="cart-container" aria-label="購物車, ${count ? `${count} 件商品` : '空的'}"> <div class="ast-cart-menu-wrap"> <span class="count"> <span class="ast-count-text">${count}</span> </span> </div> </a> </div> </div> </div> `
+  return html.replace(/(<div class="ast-builder-layout-element ast-flex site-header-focus-item" data-section="section-header-mobile-trigger">)/, cart + '$1')
+}
+
 function bodyClassFor(view: View, recPath: string, captured: string, exact: boolean): string {
   if (view.bodyClass) return view.bodyClass
   if (exact || !view.objectId) return captured
@@ -65,17 +75,18 @@ export function renderDocument(site: Site, view: View, cart: CartView | null, pa
   const seo = renderSeo(view.seo)
   const headHtml = head.replace(/(<meta name="viewport"[^>]*>)/, `$1\n\t<link rel="profile" href="https://gmpg.org/xfn/11">\n${seo}`)
   const headFinal = headHtml === head ? '<meta charset="UTF-8">\n' + seo + '\n' + head : headHtml
+  const pre = withMobileCart(renderPre(rec, chrome), chrome.cartCount)
   let suf = renderSuf(rec, chrome)
   suf = suf.replace(/<ul class="wc-block-product-categories-list wc-block-product-categories-list--depth-0">[\s\S]*?<\/ul>/, productCategoriesList(site))
   const doc = applySiteSettings(site, `<!DOCTYPE html>
 <html lang="zh-TW" prefix="og: https://ogp.me/ns#">
 <head>
-${headFinal}<link rel='stylesheet' id='kc-site-css' href='/kc/kc.css?v=1' media='all' />
+${headFinal}<link rel='stylesheet' id='kc-site-css' href='/kc/kc.css?v=2' media='all' />
 ${view.headExtra || ''}
 </head>
 
 <body ${rec.bodyAttrs} class="${esc(bodyClass)}">
-${renderPre(rec, chrome)}
+${pre}
 ${stampWpformsTokens(view.main)}
 ${suf}
 ${view.footExtra || ''}
