@@ -12,3 +12,4 @@
 .ast-header-break-point .kc-mobile-cart { margin-right: 12px; }
 .ast-header-break-point .kc-mobile-cart .ast-site-header-cart { padding: 0; }
 .ast-desktop .kc-mobile-cart { display: none; }
+.kc-mobile-cart .cart-container { display: block; }

@@ -81,7 +81,7 @@ export function renderDocument(site: Site, view: View, cart: CartView | null, pa
   const doc = applySiteSettings(site, `<!DOCTYPE html>
 <html lang="zh-TW" prefix="og: https://ogp.me/ns#">
 <head>
-${headFinal}<link rel='stylesheet' id='kc-site-css' href='/kc/kc.css?v=2' media='all' />
+${headFinal}<link rel='stylesheet' id='kc-site-css' href='/kc/kc.css?v=3' media='all' />
 ${view.headExtra || ''}
 </head>
 
