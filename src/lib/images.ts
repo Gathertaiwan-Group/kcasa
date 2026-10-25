@@ -107,19 +107,29 @@ export function responsiveImages(site: Site, html: string, opts: { eagerBefore?:
       eager = true
       set('fetchpriority', 'high')
     }
-    // WordPress' "(max-width: Wpx) 100vw, Wpx" (or a fresh one): the slot is never wider than the image itself
-    const sizes = get('sizes') && !/^auto\b/.test(get('sizes')!) ? get('sizes')! : `(max-width: ${w}px) 100vw, ${w}px`
-    if (eager) {
-      set('loading', null)
-      set('sizes', sizes)
-    } else {
-      // lazy images let the browser use the laid-out width (sizes=auto); the fallback covers older browsers
-      set('loading', 'lazy')
-      set('sizes', `auto, ${sizes}`)
-    }
+    const sizes = sizesFor(html, offset, get('class') || '', w)
+    set('sizes', sizes)
+    if (eager) set('loading', null)
+    else set('loading', 'lazy')
     set('decoding', 'async')
     return render(attrs)
   })
+}
+
+/**
+ * The slot width a browser should pick a variant for. Not `sizes="auto"`: Elementor's post-thumbnail "fit" script
+ * re-lays images out wider than their clipped box, and auto-sizing then re-downloads the full original.
+ * Thumbnails / grid & gallery cells are small on desktop; on phones (≤767px) every image is full width.
+ */
+const SMALL_CTX = /elementor-post__thumbnail|gallery-icon|gallery-item|woocommerce-LoopProduct-link|ast-woocommerce-product-gallery__image|mini_cart_item|elementor-image-carousel|swiper-slide/
+const SMALL_CLS = /\b(size-medium|size-thumbnail|attachment-medium|attachment-thumbnail|size-woocommerce_thumbnail|size-woocommerce_gallery_thumbnail|size-100x100|avatar)\b/
+export function sizesFor(html: string, offset: number, cls: string, w: number): string {
+  const near = html.slice(Math.max(0, offset - 600), offset)
+  const cols = Number(html.slice(Math.max(0, offset - 1500), offset).match(/gallery-columns-(\d)(?![\s\S]*gallery-columns-)/)?.[1] || 0)
+  let slot = Math.min(w, 1440)
+  if (cols > 1) slot = Math.min(slot, Math.ceil(1200 / cols))
+  else if (SMALL_CLS.test(cls) || SMALL_CTX.test(near)) slot = Math.min(slot, 480)
+  return `(max-width: 767px) 100vw, ${slot}px`
 }
 
 function render(attrs: [string, string | null][]): string {
