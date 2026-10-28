@@ -209,3 +209,18 @@ test('test-mode keys are refused on kcasa.pro (fail closed), allowed elsewhere; 
   assert.equal(prod.cfg.env, 'production'); assert.match(prod.cfg.gateway, /\/\/core\.newebpay\.com/)
   assert.deepEqual(resolveConfig({}, 'kcasa.pro'), { cfg: null, blocked: false })
 })
+
+test('test-mode keys are refused on any host when VERCEL_ENV=production (*.vercel.app aliases, unknown hosts, no host)', () => {
+  const env = { NEWEBPAY_ENV: 'test', NEWEBPAY_MERCHANT_ID: K.merchantId, NEWEBPAY_HASH_KEY: K.hashKey, NEWEBPAY_HASH_IV: K.hashIv, VERCEL_ENV: 'production' }
+  for (const h of ['kcasa.vercel.app', 'kcasa-git-main-armands-projects-f3e1a37d.vercel.app', 'kcasa-abc123.vercel.app', 'evil.example', '', null]) {
+    assert.deepEqual(resolveConfig(env, h), { cfg: null, blocked: true }, String(h))
+  }
+  assert.deepEqual(resolveConfig({ ...env, VERCEL_ENV: ' production ' }, 'kcasa.vercel.app'), { cfg: null, blocked: true })
+  // Preview / local development keep test mode (where the test keys belong)
+  for (const v of ['preview', 'development', undefined]) {
+    const r = resolveConfig({ ...env, VERCEL_ENV: v }, 'kcasa-abc123.vercel.app')
+    assert.equal(r.blocked, false, String(v)); assert.equal(r.cfg.env, 'test')
+  }
+  // production keys are unaffected
+  assert.equal(resolveConfig({ ...env, NEWEBPAY_ENV: 'production' }, 'kcasa.vercel.app').cfg.env, 'production')
+})

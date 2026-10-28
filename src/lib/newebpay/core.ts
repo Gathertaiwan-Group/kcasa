@@ -24,17 +24,24 @@ export function isProductionHost(host: string | null | undefined): boolean {
   return PRODUCTION_HOSTS.includes(h)
 }
 
+/** running as the Vercel production deployment (reached by any host / alias, all sharing the production database) */
+export function isProductionEnv(e: Record<string, string | undefined>): boolean {
+  return (e.VERCEL_ENV || '').trim() === 'production'
+}
+
 export type ResolvedConfig = NewebpayKeys & { env: 'test' | 'production'; gateway: string }
 /**
- * Gateway config from env for the host serving the request. `blocked` = NEWEBPAY_ENV=test on kcasa.pro:
- * refused outright (fail closed) — the test gateway approves test cards, so honouring it there would mark real
- * orders paid with no money taken.
+ * Gateway config from env for the host serving the request. `blocked` = NEWEBPAY_ENV=test in the Vercel
+ * *production* environment (VERCEL_ENV=production — whatever host it is reached by, incl. *.vercel.app aliases
+ * that share the production database) or on kcasa.pro: refused outright (fail closed) — the test gateway
+ * approves test cards, so honouring it there would mark real orders paid with no money taken.
+ * Test keys belong in the Vercel *Preview* environment only.
  */
 export function resolveConfig(e: Record<string, string | undefined>, host: string | null): { cfg: ResolvedConfig | null; blocked: boolean } {
   const env = (e.NEWEBPAY_ENV || '').trim()
   const k = { merchantId: (e.NEWEBPAY_MERCHANT_ID || '').trim(), hashKey: (e.NEWEBPAY_HASH_KEY || '').trim(), hashIv: (e.NEWEBPAY_HASH_IV || '').trim() }
   if ((env !== 'test' && env !== 'production') || !validKeys(k)) return { cfg: null, blocked: false }
-  if (env === 'test' && isProductionHost(host)) return { cfg: null, blocked: true }
+  if (env === 'test' && (isProductionEnv(e) || isProductionHost(host))) return { cfg: null, blocked: true }
   return { cfg: { ...k, env, gateway: env === 'production' ? 'https://core.newebpay.com/MPG/mpg_gateway' : 'https://ccore.newebpay.com/MPG/mpg_gateway' }, blocked: false }
 }
 

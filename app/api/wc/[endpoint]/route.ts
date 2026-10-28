@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server'
 import { addToCart, cartHashOf, loadCart, removeItem, syncWcCookies } from '@/lib/cart'
 import { miniCartHtml } from '@/lib/document'
 import { responsiveImages } from '@/lib/images'
+import { releaseExpiredHolds } from '@/lib/newebpay'
 import { getSite } from '@/lib/site'
 
 export const dynamic = 'force-dynamic'
@@ -30,6 +31,7 @@ async function handle(req: NextRequest, endpoint: string) {
       return json(await fragments())
     case 'add_to_cart': {
       const pid = Number(fd.get('product_id') || fd.get('add-to-cart'))
+      await releaseExpiredHolds() // before the stock check: an expired 藍新 hold must not make the item look sold out
       const r = await addToCart(pid, Number(fd.get('variation_id')) || null, Number(fd.get('quantity')) || 1, {})
       if (!r.ok) return json({ error: true, product_url: r.product ? `/product/${r.product.slug}/` : '/shop/' })
       return json(await fragments())

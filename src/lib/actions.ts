@@ -14,7 +14,7 @@ import { getSite, invalidateSite } from './site'
 import { esc, normPath, siteUrl } from './util'
 import { verifyWpformsToken } from './wpforms-token'
 import { BILLING_FIELDS, SHIPPING_FIELDS } from './views/checkout'
-import { GATEWAY_ID, HOLD_MINUTES, cancelUnpaidNewebpayOrders, holdStock, paymentMethods, settleHoldForStatus } from './newebpay'
+import { GATEWAY_ID, HOLD_MINUTES, holdStock, paymentMethods, releaseExpiredHolds, settleHoldForStatus } from './newebpay'
 
 type F = Record<string, string>
 
@@ -53,6 +53,7 @@ export async function handlePost(url: URL, fd: FormData): Promise<Out> {
   // ---- add to cart (product page form, or any URL with add-to-cart)
   if (f['add-to-cart'] || url.searchParams.get('add-to-cart')) {
     const pid = Number(f['add-to-cart'] || url.searchParams.get('add-to-cart'))
+    await releaseExpiredHolds() // before the stock check: an expired 藍新 hold must not make the item look sold out
     const r = await addToCart(pid, Number(f.variation_id) || null, Number(f.quantity) || 1, f)
     if (r.ok) await pushNotice({ type: 'success', html: `<a href="/cart/" tabindex="1" class="button wc-forward">查看購物車</a> 「${esc(r.product!.name)}」已加入您的購物車。` })
     else await pushNotice({ type: 'error', html: esc(r.error || '無法加入購物車。') })
@@ -122,6 +123,8 @@ async function placeOrder(f: F): Promise<Out> {
   if (!pm) errors.push('無效的付款方式。')
   const online = pm?.id === GATEWAY_ID
   const user = await currentUser()
+  // expired 藍新 orders give their held stock back before any stock check of this order
+  await releaseExpiredHolds()
   const cart = await loadCart({ email: billing.email })
   if (!cart.lines.length) errors.push('抱歉，您的工作階段已過期。<a href="/shop/" class="wc-backward">回到商店</a>')
   // amount is always the server-side cart total; NewebPay needs a positive whole-dollar TWD amount
@@ -136,8 +139,6 @@ async function placeOrder(f: F): Promise<Out> {
     return back('/checkout/')
   }
   const db = svc()
-  // expired 藍新 orders give their held stock back before this order tries to reserve it
-  await cancelUnpaidNewebpayOrders().catch(() => 0)
   const customer = user ? await customerFor(user).catch(() => null) : null
   const h = await headers()
   const ship = cart.chosenShipping

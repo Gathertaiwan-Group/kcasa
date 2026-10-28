@@ -6,9 +6,11 @@
  * without them the gateway is simply not offered and checkout keeps working with 領取報價 only.
  */
 import { audit as auditLog } from '../admin/core'
+import { purgePublicPages } from '../page-cache'
 import { svc } from '../sb'
+import { invalidateSite } from '../site'
 import { esc } from '../util'
-import { GATEWAY_ID, buildMpgForm, isProductionHost, isValidMerchantOrderNo, resolveConfig, type NewebpayKeys, type NotifyStore } from './core'
+import { GATEWAY_ID, buildMpgForm, isProductionEnv, isProductionHost, isValidMerchantOrderNo, resolveConfig, type NewebpayKeys, type NotifyStore } from './core'
 
 export { GATEWAY_ID }
 
@@ -24,7 +26,7 @@ export { isProductionHost }
  */
 export function newebpayConfig(host: string | null): NewebpayConfig | null {
   const { cfg, blocked } = resolveConfig(process.env, host)
-  if (blocked) console.error(`[newebpay] NEWEBPAY_ENV=test on production host ${host}: gateway disabled, no order will be marked paid`)
+  if (blocked) console.error(`[newebpay] NEWEBPAY_ENV=test in production (VERCEL_ENV=${process.env.VERCEL_ENV || '-'}, host ${host}): gateway disabled, no order will be marked paid`)
   return cfg
 }
 
@@ -32,8 +34,8 @@ export function newebpayConfig(host: string | null): NewebpayConfig | null {
 export function newebpayWarning(host: string | null): string | null {
   const env = (process.env.NEWEBPAY_ENV || '').trim()
   if (env !== 'test') return null
-  if (isProductionHost(host) || isProductionHost(new URL(process.env.SITE_URL || 'https://kcasa.pro').host))
-    return '藍新金流目前是「測試模式」（NEWEBPAY_ENV=test）。在正式網域 kcasa.pro 上已自動停用信用卡付款，測試交易不會把任何訂單標為已付款；正式上線前請改用正式金鑰並設 NEWEBPAY_ENV=production。'
+  if (isProductionEnv(process.env) || isProductionHost(host) || isProductionHost(new URL(process.env.SITE_URL || 'https://kcasa.pro').host))
+    return '藍新金流目前是「測試模式」（NEWEBPAY_ENV=test）。正式環境（Vercel Production／kcasa.pro）已自動停用信用卡付款，測試交易不會把任何訂單標為已付款；測試金鑰請只設在 Vercel Preview 環境，正式上線請改用正式金鑰並設 NEWEBPAY_ENV=production。'
   return '藍新金流目前是「測試模式」（NEWEBPAY_ENV=test）：信用卡付款走藍新測試環境，不會真的收款。'
 }
 
@@ -165,8 +167,10 @@ export async function settleHoldForStatus(orderId: number, status: string, alway
 
 /**
  * WooCommerce cancels unpaid checkout orders after woocommerce_hold_stock_minutes (60). Only NewebPay orders
- * qualify here (領取報價 orders stay pending for manual follow-up). Cancelling releases the order's stock hold
- * in the same transaction (site_kcasa.newebpay_cancel_expired → order_release_stock).
+ * qualify here (領取報價 orders stay pending for manual follow-up). Cancelling releases the order's stock hold and
+ * writes the order note + audit row in the same transaction (site_kcasa.newebpay_cancel_expired). The pg_cron job
+ * site_kcasa_expire_holds runs the same function every 5 minutes; the app also runs it before every stock check
+ * (add to cart, checkout, admin order list) so an expired hold never blocks a buyer.
  */
 export async function cancelUnpaidNewebpayOrders(): Promise<number> {
   const { data, error } = await svc().rpc('newebpay_cancel_expired', { p_minutes: HOLD_MINUTES })
@@ -174,12 +178,17 @@ export async function cancelUnpaidNewebpayOrders(): Promise<number> {
     console.error('[newebpay] cancel_expired', error.message)
     return 0
   }
-  const ids = ((data as any[]) || []).map((r: any) => Number(typeof r === 'object' ? Object.values(r)[0] : r))
-  for (const id of ids) {
-    await svc().from('order_notes').insert({ order_id: id, content: '未付款訂單已取消 - 已達付款時限，預留庫存已釋放。訂單狀態已從「等待付款中」變更為「已取消」。', is_customer_note: false, added_by: 'system' })
-    await auditLog(SYSTEM, 'order.status', 'order', id, { status: 'pending' }, { status: 'cancelled', reason: `unpaid after ${HOLD_MINUTES} minutes`, stock_hold: 'released' })
+  return ((data as any[]) || []).length
+}
+
+/** run the expiry before a stock check (add to cart / checkout); refresh cached stock when anything was released */
+export async function releaseExpiredHolds(): Promise<number> {
+  const n = await cancelUnpaidNewebpayOrders().catch(() => 0)
+  if (n > 0) {
+    invalidateSite()
+    await purgePublicPages().catch(() => undefined)
   }
-  return ids.length
+  return n
 }
 
 /** seconds left in the 60-minute payment window */
