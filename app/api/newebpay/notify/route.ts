@@ -4,13 +4,14 @@
  */
 import { revalidatePath } from 'next/cache'
 import { handleNotify } from '@/lib/newebpay/core'
-import { dbStore, newebpayConfig } from '@/lib/newebpay'
+import { dbStore, hostOf, newebpayConfig } from '@/lib/newebpay'
 import { purgePublicPages } from '@/lib/page-cache'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
-  const cfg = newebpayConfig()
+  // null also when NEWEBPAY_ENV=test on kcasa.pro (fail closed, logged in newebpayConfig)
+  const cfg = newebpayConfig(hostOf(req))
   if (!cfg) return new Response('gateway disabled', { status: 503 })
   let form: Record<string, string> = {}
   try {

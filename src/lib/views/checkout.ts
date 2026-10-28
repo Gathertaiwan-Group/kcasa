@@ -7,7 +7,7 @@ import { esc, money } from '../util'
 import { noticesHtml, type Ctx, type View } from './common'
 import { pageMain, seoFor } from './content'
 
-import { CHEQUE, GATEWAY_ID, paymentMethods, type PaymentMethod } from '../newebpay'
+import { CHEQUE, GATEWAY_ID, type PaymentMethod } from '../newebpay'
 
 /** default (first) payment method — old site woocommerce_cheque_settings */
 export const PAYMENT = CHEQUE
@@ -235,7 +235,7 @@ function paymentMethodsHtml(methods: PaymentMethod[], chosen: string): string {
     .join('\n')
 }
 
-export function checkoutView(page: Post, ctx: Ctx, cart: CartView, prefill: Record<string, string>): View {
+export function checkoutView(page: Post, ctx: Ctx, cart: CartView, prefill: Record<string, string>, methods: PaymentMethod[] = [CHEQUE]): View {
   if (!cart.lines.length) {
     const v = cartView(page, ctx, cart)
     return { ...v, kind: 'checkout', legacyPath: '/checkout/' }
@@ -358,7 +358,7 @@ export function checkoutView(page: Post, ctx: Ctx, cart: CartView, prefill: Reco
 		${review}
 <div id="payment" class="woocommerce-checkout-payment">
 			<ul class="wc_payment_methods payment_methods methods">
-${paymentMethodsHtml(paymentMethods(), val('payment_method'))}
+${paymentMethodsHtml(methods, val('payment_method'))}
 		</ul>
 		<div class="form-row place-order">
 		<noscript>

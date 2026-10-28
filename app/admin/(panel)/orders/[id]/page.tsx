@@ -6,6 +6,8 @@ import { twDateTime } from '@/lib/admin/core'
 import { getOrder, ORDER_STATUSES } from '@/lib/admin/shop'
 import { requireAdmin } from '@/lib/admin/session'
 import { idParam, orNotFound } from '@/lib/admin/notfound'
+import { headers } from 'next/headers'
+import { GATEWAY_ID, newebpayWarning } from '@/lib/newebpay'
 
 export const metadata = { title: '訂單明細' }
 const ADDR: [string, string][] = [['last_name', '姓'], ['first_name', '名'], ['company', '公司'], ['address_1', '地址'], ['address_2', '地址 2'], ['city', '鄉鎮市區'], ['state', '縣市'], ['postcode', '郵遞區號'], ['country', '國家'], ['phone', '電話'], ['email', 'Email']]
@@ -30,6 +32,8 @@ export default async function OrderDetail({ params, searchParams }: { params: Pr
   const o = await orNotFound(getOrder(idParam(id)))
   const lines = o.items.filter((i: any) => i.item_type === 'line_item')
   const others = o.items.filter((i: any) => i.item_type !== 'line_item')
+  const hh = await headers()
+  const npWarn = o.payment_method === GATEWAY_ID ? newebpayWarning((hh.get('x-forwarded-host') || hh.get('host') || '').split(',')[0].trim() || null) : null
   return (
     <>
       <h1>
@@ -37,6 +41,7 @@ export default async function OrderDetail({ params, searchParams }: { params: Pr
         <Link className="btn" href="/admin/orders/">返回列表</Link>
       </h1>
       <Notice q={q} />
+      {npWarn && <div role="alert" style={{ background: '#fcf0f1', border: '2px solid #d63638', color: '#8a2424', padding: '10px 14px', margin: '8px 0 12px', fontWeight: 600 }}>注意：{npWarn}</div>}
       <div className="grid2">
         <div>
           <div className="card">

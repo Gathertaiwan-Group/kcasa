@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildMpgForm, buildQuery, decryptTradeInfo, encryptTradeInfo, handleNotify, parseCallback, tradeSha, verifyTradeSha,
+  buildMpgForm, buildQuery, decryptTradeInfo, encryptTradeInfo, handleNotify, isProductionHost, isValidMerchantOrderNo, merchantOrderNo, orderIdFrom, parseCallback, resolveConfig, tradeSha, verifyTradeSha,
 } from '../src/lib/newebpay/core.ts'
 
 // NewebPay MPG technical document example (HashKey / HashIV / TradeInfo / TradeSha)
@@ -38,13 +38,13 @@ test('decrypt rejects tampered ciphertext / wrong key', () => {
 })
 
 test('MPG form round-trips and carries server amount', () => {
-  const f = buildMpgForm(K, { orderId: 7, amount: 1280, itemDesc: 'x', email: 'a@b.c', notifyUrl: 'https://s/n', returnUrl: 'https://s/r', clientBackUrl: 'https://s/b', timestamp: 1 })
+  const f = buildMpgForm(K, { merchantOrderNo: 'KC7', amount: 1280, itemDesc: 'x', email: 'a@b.c', notifyUrl: 'https://s/n', returnUrl: 'https://s/r', clientBackUrl: 'https://s/b', timestamp: 1 })
   assert.equal(f.TradeSha, tradeSha(f.TradeInfo, K))
   const q = new URLSearchParams(decryptTradeInfo(f.TradeInfo, K))
   assert.equal(q.get('Amt'), '1280')
   assert.equal(q.get('MerchantOrderNo'), 'KC7')
   assert.equal(q.get('CREDIT'), '1')
-  assert.throws(() => buildMpgForm(K, { orderId: 7, amount: 12.5, itemDesc: 'x', email: '', notifyUrl: '', returnUrl: '', clientBackUrl: '' }))
+  assert.throws(() => buildMpgForm(K, { merchantOrderNo: 'KC7', amount: 12.5, itemDesc: 'x', email: '', notifyUrl: '', returnUrl: '', clientBackUrl: '' }))
 })
 
 // ---------------------------------------------------------------- notify handling with an in-memory store
@@ -54,10 +54,11 @@ function notifyBody(keys, { status = 'SUCCESS', amt = 1280, mon = 'KC123', trade
   return { Status: status, MerchantID: merchant, Version: '2.0', TradeInfo, TradeSha: tradeSha(TradeInfo, keys) }
 }
 
-function memStore(order) {
-  const s = { order: { ...order }, stockReduced: 0, notes: [], audits: [], txns: [] }
+function memStore(order, attempts = []) {
+  const s = { order: { ...order }, stockReduced: 0, notes: [], audits: [], txns: [], attempts: new Map(attempts.map((m) => [m, order.id])) }
   s.api = {
     async getOrder(id) { return id === s.order.id ? { ...s.order } : null },
+    async isOrderNo(id, mon) { return s.attempts.get(mon) === id },
     async markPaid(id, tradeNo, meta) {
       const o = s.order
       if (id !== o.id || !['pending', 'failed', 'cancelled'].includes(o.status) || o.transaction_id || o.meta.stock_reduced) return false
@@ -144,4 +145,67 @@ test('failed payment → failed once; later duplicates ignored; paid order never
 test('parseCallback: missing fields', () => {
   assert.deepEqual(parseCallback({}, K), { ok: false, reason: 'missing_fields' })
   assert.equal(buildQuery({ a: 'x y', b: 1 }), 'a=x+y&b=1')
+})
+
+// ---------------------------------------------------------------- MerchantOrderNo per attempt
+test('MerchantOrderNo: unique per attempt, ≤30 chars, letters/digits/underscore only', () => {
+  const nos = [1, 2, 3, 20].map((n) => merchantOrderNo(123, n))
+  assert.deepEqual(nos, ['KC123_1', 'KC123_2', 'KC123_3', 'KC123_20'])
+  assert.equal(new Set(nos).size, nos.length)
+  const longest = merchantOrderNo(999999999999999, 9999)
+  assert.ok(longest.length <= 30, longest)
+  for (const m of [...nos, longest]) assert.match(m, /^[A-Za-z0-9_]{1,30}$/)
+  assert.throws(() => merchantOrderNo(123, 0)); assert.throws(() => merchantOrderNo(123, 10000)); assert.throws(() => merchantOrderNo(0, 1))
+})
+
+test('orderIdFrom: new KC<id>_<n> and legacy KC<id> both map to the order; junk does not', () => {
+  assert.equal(orderIdFrom('KC123_2'), 123)
+  assert.equal(orderIdFrom('KC123'), 123) // legacy format still accepted
+  for (const bad of ['', 'KC', 'KC_1', 'KCabc', 'XX123', 'KC123_', 'KC123_1_2', 'KC123-1', 'KC123_12345', 'kc123', 'KC' + '9'.repeat(16)]) {
+    assert.equal(orderIdFrom(bad), null, bad); assert.equal(isValidMerchantOrderNo(bad), false, bad)
+  }
+})
+
+test('MPG form carries the attempt number and a clamped TradeLimit', () => {
+  const base = { amount: 1280, itemDesc: 'x', email: '', notifyUrl: 'https://s/n', returnUrl: 'https://s/r', clientBackUrl: 'https://s/b', timestamp: 1 }
+  const q = (f) => new URLSearchParams(decryptTradeInfo(f.TradeInfo, K))
+  assert.equal(q(buildMpgForm(K, { ...base, merchantOrderNo: 'KC7_3', tradeLimit: 3599 })).get('MerchantOrderNo'), 'KC7_3')
+  assert.equal(q(buildMpgForm(K, { ...base, merchantOrderNo: 'KC7_3', tradeLimit: 3599 })).get('TradeLimit'), '900')
+  assert.equal(q(buildMpgForm(K, { ...base, merchantOrderNo: 'KC7_3', tradeLimit: 75 })).get('TradeLimit'), '75')
+  assert.equal(q(buildMpgForm(K, { ...base, merchantOrderNo: 'KC7_3', tradeLimit: 5 })).get('TradeLimit'), '60')
+  assert.throws(() => buildMpgForm(K, { ...base, merchantOrderNo: 'KC7-3' }))
+})
+
+test('notify: a re-pay attempt number (KC<id>_<n>) issued for the order is accepted; one never issued is rejected', async () => {
+  const s = memStore({ ...ORDER, meta: { newebpay: { merchant_order_no: 'KC123_2' } } }, ['KC123_1', 'KC123_2'])
+  // first attempt's late notify (meta already points at attempt 2) still maps through newebpay_attempts
+  const r = await handleNotify(notifyBody(K, { mon: 'KC123_1' }), K, s.api)
+  assert.equal(r.outcome, 'paid'); assert.equal(s.order.status, 'processing')
+  const s2 = memStore({ ...ORDER, meta: { newebpay: { merchant_order_no: 'KC123_2' } } }, ['KC123_1', 'KC123_2'])
+  assert.equal((await handleNotify(notifyBody(K, { mon: 'KC123_3' }), K, s2.api)).reason, 'unknown_order')
+  // another order's attempt number must not pay this order
+  const s3 = memStore(ORDER, ['KC123_1'])
+  s3.attempts.set('KC124_1', 124)
+  assert.equal((await handleNotify(notifyBody(K, { mon: 'KC124_1' }), K, s3.api)).reason, 'unknown_order')
+  assert.equal(s2.order.status, 'pending'); assert.equal(s3.order.status, 'pending')
+})
+
+test('notify: legacy KC<id> order (pre-attempt) still accepted', async () => {
+  const s = memStore(ORDER) // meta.newebpay.merchant_order_no = 'KC123', no attempts rows
+  assert.equal((await handleNotify(notifyBody(K, { mon: 'KC123' }), K, s.api)).outcome, 'paid')
+})
+
+// ---------------------------------------------------------------- NEWEBPAY_ENV=test on the live domain
+test('test-mode keys are refused on kcasa.pro (fail closed), allowed elsewhere; production keys work everywhere', () => {
+  const env = { NEWEBPAY_ENV: 'test', NEWEBPAY_MERCHANT_ID: K.merchantId, NEWEBPAY_HASH_KEY: K.hashKey, NEWEBPAY_HASH_IV: K.hashIv }
+  for (const h of ['kcasa.pro', 'www.kcasa.pro', 'KCASA.PRO', 'kcasa.pro:443', 'kcasa.pro.']) {
+    assert.ok(isProductionHost(h), h)
+    assert.deepEqual(resolveConfig(env, h), { cfg: null, blocked: true })
+  }
+  const ok = resolveConfig(env, 'kcasa.vercel.app')
+  assert.equal(ok.blocked, false); assert.equal(ok.cfg.env, 'test'); assert.match(ok.cfg.gateway, /ccore\.newebpay\.com/)
+  assert.ok(!isProductionHost('kcasa.pro.evil.com')); assert.ok(!isProductionHost('notkcasa.pro'))
+  const prod = resolveConfig({ ...env, NEWEBPAY_ENV: 'production' }, 'kcasa.pro')
+  assert.equal(prod.cfg.env, 'production'); assert.match(prod.cfg.gateway, /\/\/core\.newebpay\.com/)
+  assert.deepEqual(resolveConfig({}, 'kcasa.pro'), { cfg: null, blocked: false })
 })

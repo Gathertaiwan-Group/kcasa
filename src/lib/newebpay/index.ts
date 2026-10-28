@@ -8,18 +8,40 @@
 import { audit as auditLog } from '../admin/core'
 import { svc } from '../sb'
 import { esc } from '../util'
-import { GATEWAY_ID, buildMpgForm, validKeys, type NewebpayKeys, type NotifyStore } from './core'
+import { GATEWAY_ID, buildMpgForm, isProductionHost, isValidMerchantOrderNo, resolveConfig, type NewebpayKeys, type NotifyStore } from './core'
 
 export { GATEWAY_ID }
 
 export type NewebpayConfig = NewebpayKeys & { env: 'test' | 'production'; gateway: string }
 
-export function newebpayConfig(): NewebpayConfig | null {
+export { isProductionHost }
+
+/**
+ * Gateway config for the host serving this request, or null (gateway off). NEWEBPAY_ENV=test on kcasa.pro is
+ * refused (core.resolveConfig): the gateway is then not offered, the pay page 404s and Notify answers 503
+ * without touching any order; the misconfiguration is logged on every use and shown as a banner in the admin
+ * order screens (newebpayWarning).
+ */
+export function newebpayConfig(host: string | null): NewebpayConfig | null {
+  const { cfg, blocked } = resolveConfig(process.env, host)
+  if (blocked) console.error(`[newebpay] NEWEBPAY_ENV=test on production host ${host}: gateway disabled, no order will be marked paid`)
+  return cfg
+}
+
+/** admin banner text (null = nothing to warn about) */
+export function newebpayWarning(host: string | null): string | null {
   const env = (process.env.NEWEBPAY_ENV || '').trim()
-  const k = { merchantId: (process.env.NEWEBPAY_MERCHANT_ID || '').trim(), hashKey: (process.env.NEWEBPAY_HASH_KEY || '').trim(), hashIv: (process.env.NEWEBPAY_HASH_IV || '').trim() }
-  if (env !== 'test' && env !== 'production') return null
-  if (!validKeys(k)) return null
-  return { ...k, env, gateway: env === 'production' ? 'https://core.newebpay.com/MPG/mpg_gateway' : 'https://ccore.newebpay.com/MPG/mpg_gateway' }
+  if (env !== 'test') return null
+  if (isProductionHost(host) || isProductionHost(new URL(process.env.SITE_URL || 'https://kcasa.pro').host))
+    return '藍新金流目前是「測試模式」（NEWEBPAY_ENV=test）。在正式網域 kcasa.pro 上已自動停用信用卡付款，測試交易不會把任何訂單標為已付款；正式上線前請改用正式金鑰並設 NEWEBPAY_ENV=production。'
+  return '藍新金流目前是「測試模式」（NEWEBPAY_ENV=test）：信用卡付款走藍新測試環境，不會真的收款。'
+}
+
+/** visitor-facing host of a route-handler request */
+export function hostOf(req: Request): string | null {
+  const h = req.headers
+  const host = (h.get('x-forwarded-host') || h.get('host') || '').split(',')[0].trim()
+  return host || null
 }
 
 export type PaymentMethod = { id: string; title: string; description: string }
@@ -28,12 +50,16 @@ export type PaymentMethod = { id: string; title: string; description: string }
 export const CHEQUE: PaymentMethod = { id: 'cheque', title: '領取報價', description: '小編會進一步與您聯繫＆報價' }
 export const NEWEBPAY_CREDIT: PaymentMethod = { id: GATEWAY_ID, title: '藍新信用卡', description: '使用信用卡付款' }
 
-export function paymentMethods(): PaymentMethod[] {
-  return newebpayConfig() ? [CHEQUE, NEWEBPAY_CREDIT] : [CHEQUE]
+export function paymentMethods(host: string | null): PaymentMethod[] {
+  return newebpayConfig(host) ? [CHEQUE, NEWEBPAY_CREDIT] : [CHEQUE]
 }
 
 /** woocommerce_hold_stock_minutes on the old site */
 export const HOLD_MINUTES = 60
+/** flood guard: unpaid 藍新 orders allowed per IP and per e-mail inside the hold window */
+export const MAX_UNPAID_PER_BUYER = 3
+/** payment attempts (MerchantOrderNo) per order */
+export const MAX_ATTEMPTS = 20
 
 const SYSTEM = { email: 'newebpay', via: 'system' as const }
 
@@ -47,18 +73,15 @@ export const dbStore: NotifyStore = {
     if (error) throw new Error(`newebpay_mark_paid: ${error.message}`)
     return data === true
   },
+  async isOrderNo(id, mon) {
+    if (!isValidMerchantOrderNo(mon)) return false
+    const { data } = await svc().from('newebpay_attempts').select('order_id').eq('merchant_order_no', mon).maybeSingle()
+    return !!data && Number((data as any).order_id) === id
+  },
   async markFailed(id, meta) {
-    const cur = await this.getOrder(id)
-    if (!cur) return false
-    const { data, error } = await svc()
-      .from('orders')
-      .update({ status: 'failed', meta: { ...(cur.meta || {}), newebpay: { ...(cur.meta?.newebpay || {}), ...meta } } })
-      .eq('id', id)
-      .eq('status', 'pending')
-      .eq('transaction_id', '')
-      .select('id')
-    if (error) throw new Error(`markFailed: ${error.message}`)
-    return (data || []).length === 1
+    const { data, error } = await svc().rpc('order_release_stock', { p_order_id: id, p_new_status: 'failed', p_meta: meta })
+    if (error) throw new Error(`order_release_stock: ${error.message}`)
+    return data === true
   },
   async addNote(orderId, content) {
     await svc().from('order_notes').insert({ order_id: orderId, content, is_customer_note: false, added_by: 'system' })
@@ -82,11 +105,12 @@ export function originOf(req: Request): string {
 }
 
 /** HTML page that POSTs the signed MPG form to NewebPay */
-export function payFormHtml(cfg: NewebpayConfig, order: any, origin: string): string {
+export function payFormHtml(cfg: NewebpayConfig, order: any, origin: string, mon: string, tradeLimit: number): string {
   const received = `${origin}/checkout/order-received/${order.id}/?key=${encodeURIComponent(order.order_key)}`
   const f = buildMpgForm(cfg, {
-    orderId: order.id,
+    merchantOrderNo: mon,
     amount: Number(order.total),
+    tradeLimit,
     itemDesc: `Kcasa 工富家飾 訂單 #${order.order_number || order.id}`,
     email: order.billing?.email || '',
     notifyUrl: `${origin}/api/newebpay/notify`,
@@ -102,28 +126,65 @@ export function payFormHtml(cfg: NewebpayConfig, order: any, origin: string): st
 <script>document.getElementById('np').submit()</script></body></html>`
 }
 
+export type HoldResult = { ok: true } | { ok: false; reason: 'out_of_stock' | 'too_many_unpaid' | 'no_order' | 'error'; short?: any[] }
+
+/** reserve stock for a just-placed 藍新 order (atomic, row-locked; refuses when short or flooding) */
+export async function holdStock(orderId: number): Promise<HoldResult> {
+  const { data, error } = await svc().rpc('order_hold_stock', { p_order_id: orderId, p_max_unpaid: MAX_UNPAID_PER_BUYER, p_window_minutes: HOLD_MINUTES })
+  if (error || !data) {
+    console.error('[newebpay] order_hold_stock', error?.message)
+    return { ok: false, reason: 'error' }
+  }
+  return data as HoldResult
+}
+
+/** a fresh MerchantOrderNo for this payment attempt, or null when the order can no longer be paid */
+export async function newAttempt(orderId: number): Promise<string | null> {
+  const { data, error } = await svc().rpc('newebpay_new_attempt', { p_order_id: orderId, p_max: MAX_ATTEMPTS })
+  if (error) throw new Error(`newebpay_new_attempt: ${error.message}`)
+  return typeof data === 'string' && isValidMerchantOrderNo(data) ? data : null
+}
+
+/**
+ * Admin / MCP status change on an order with a stock hold: cancelled / failed / refunded give the stock back,
+ * processing / completed / on-hold turn the hold into the final reduction (WooCommerce does the same).
+ */
+export async function settleHoldForStatus(orderId: number, status: string, always = false): Promise<'released' | 'converted' | null> {
+  if (['cancelled', 'failed', 'refunded', 'trash'].includes(status)) {
+    const { data, error } = await svc().rpc('order_release_stock', { p_order_id: orderId })
+    if (error) throw new Error(`order_release_stock: ${error.message}`)
+    return data === true ? 'released' : null
+  }
+  if (['processing', 'completed', 'on-hold'].includes(status)) {
+    const { data, error } = await svc().rpc('order_convert_hold', { p_order_id: orderId, p_always: always })
+    if (error) throw new Error(`order_convert_hold: ${error.message}`)
+    return data === true ? 'converted' : null
+  }
+  return null
+}
+
 /**
  * WooCommerce cancels unpaid checkout orders after woocommerce_hold_stock_minutes (60). Only NewebPay orders
- * qualify here (領取報價 orders stay pending for manual follow-up). NewebPay orders do not reduce stock until
- * paid, so cancelling restores nothing — same as WooCommerce, which only reduces stock on payment.
+ * qualify here (領取報價 orders stay pending for manual follow-up). Cancelling releases the order's stock hold
+ * in the same transaction (site_kcasa.newebpay_cancel_expired → order_release_stock).
  */
 export async function cancelUnpaidNewebpayOrders(): Promise<number> {
-  const cutoff = new Date(Date.now() - HOLD_MINUTES * 60_000).toISOString()
-  const { data } = await svc()
-    .from('orders')
-    .update({ status: 'cancelled' })
-    .eq('payment_method', GATEWAY_ID)
-    .eq('status', 'pending')
-    .eq('transaction_id', '')
-    .eq('created_via', 'checkout')
-    .lt('created_at', cutoff)
-    .select('id')
-  const ids = (data || []).map((r: any) => r.id)
+  const { data, error } = await svc().rpc('newebpay_cancel_expired', { p_minutes: HOLD_MINUTES })
+  if (error) {
+    console.error('[newebpay] cancel_expired', error.message)
+    return 0
+  }
+  const ids = ((data as any[]) || []).map((r: any) => Number(typeof r === 'object' ? Object.values(r)[0] : r))
   for (const id of ids) {
-    await svc().from('order_notes').insert({ order_id: id, content: '未付款訂單已取消 - 已達付款時限。訂單狀態已從「等待付款中」變更為「已取消」。', is_customer_note: false, added_by: 'system' })
-    await auditLog(SYSTEM, 'order.status', 'order', id, { status: 'pending' }, { status: 'cancelled', reason: `unpaid after ${HOLD_MINUTES} minutes` })
+    await svc().from('order_notes').insert({ order_id: id, content: '未付款訂單已取消 - 已達付款時限，預留庫存已釋放。訂單狀態已從「等待付款中」變更為「已取消」。', is_customer_note: false, added_by: 'system' })
+    await auditLog(SYSTEM, 'order.status', 'order', id, { status: 'pending' }, { status: 'cancelled', reason: `unpaid after ${HOLD_MINUTES} minutes`, stock_hold: 'released' })
   }
   return ids.length
+}
+
+/** seconds left in the 60-minute payment window */
+export function secondsLeft(order: any): number {
+  return Math.floor((new Date(order.created_at).getTime() + HOLD_MINUTES * 60_000 - Date.now()) / 1000)
 }
 
 export function isExpired(order: any): boolean {

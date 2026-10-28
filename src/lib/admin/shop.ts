@@ -3,6 +3,7 @@
 import { svc } from '../sb'
 import { setObjectTerms, termIdsByName, upsertRedirectRaw } from './content'
 import { audit, diff, must, normSlug, nowIso, numOrNull, OpError, pick, touched, wpSlug, type Actor } from './core'
+import { settleHoldForStatus } from '../newebpay'
 
 export const PRODUCT_STATUSES = ['publish', 'draft', 'pending', 'private', 'trash'] as const
 export const STOCK_STATUSES = ['instock', 'outofstock', 'onbackorder'] as const
@@ -355,8 +356,11 @@ export async function updateOrderStatus(actor: Actor, id: number, status: string
   if ((status === 'processing' || status === 'completed') && !before.paid_at) patch.paid_at = nowIso()
   if (status === 'completed' && !before.completed_at) patch.completed_at = nowIso()
   must(await svc().from('orders').update(patch).eq('id', id), 'order update')
+  // a 藍新 stock hold follows the status: cancel / fail / refund give the stock back, paid statuses make it final
+  const hold = before.status !== status ? await settleHoldForStatus(id, status) : null
+  if (hold) patch.stock_hold = hold
   if (before.status !== status) {
-    await svc().from('order_notes').insert({ order_id: id, content: `訂單狀態已從「${ORDER_STATUSES[before.status] || before.status}」變更為「${ORDER_STATUSES[status]}」。${note ? ' ' + note : ''}`, is_customer_note: false, added_by: actor.email })
+    await svc().from('order_notes').insert({ order_id: id, content: `訂單狀態已從「${ORDER_STATUSES[before.status] || before.status}」變更為「${ORDER_STATUSES[status]}」。${hold === 'released' ? '預留庫存已釋放。' : ''}${note ? ' ' + note : ''}`, is_customer_note: false, added_by: actor.email })
   } else if (note) {
     await svc().from('order_notes').insert({ order_id: id, content: note, is_customer_note: false, added_by: actor.email })
   }

@@ -14,8 +14,7 @@ import { getSite, invalidateSite } from './site'
 import { esc, normPath, siteUrl } from './util'
 import { verifyWpformsToken } from './wpforms-token'
 import { BILLING_FIELDS, SHIPPING_FIELDS } from './views/checkout'
-import { GATEWAY_ID, cancelUnpaidNewebpayOrders, paymentMethods } from './newebpay'
-import { merchantOrderNo } from './newebpay/core'
+import { GATEWAY_ID, HOLD_MINUTES, cancelUnpaidNewebpayOrders, holdStock, paymentMethods, settleHoldForStatus } from './newebpay'
 
 type F = Record<string, string>
 
@@ -117,7 +116,8 @@ async function placeOrder(f: F): Promise<Out> {
     shipping.country = 'TW'
   }
   if (f['shipping_method[0]']) await updateCartMeta({ shipping_method: f['shipping_method[0]'] })
-  const methods = paymentMethods()
+  const reqHost = ((await headers()).get('x-forwarded-host') || (await headers()).get('host') || '').split(',')[0].trim() || null
+  const methods = paymentMethods(reqHost)
   const pm = methods.find((m) => m.id === (f.payment_method || methods[0].id))
   if (!pm) errors.push('無效的付款方式。')
   const online = pm?.id === GATEWAY_ID
@@ -136,6 +136,8 @@ async function placeOrder(f: F): Promise<Out> {
     return back('/checkout/')
   }
   const db = svc()
+  // expired 藍新 orders give their held stock back before this order tries to reserve it
+  await cancelUnpaidNewebpayOrders().catch(() => 0)
   const customer = user ? await customerFor(user).catch(() => null) : null
   const h = await headers()
   const ship = cart.chosenShipping
@@ -167,7 +169,7 @@ async function placeOrder(f: F): Promise<Out> {
     await pushNotice({ type: 'error', html: '處理訂單時發生錯誤，請再試一次。' })
     return back('/checkout/')
   }
-  await db.from('orders').update({ order_number: String(order.id), ...(online ? { meta: { shipping_title: ship?.label || '', source: 'nextjs', newebpay: { merchant_order_no: merchantOrderNo(order.id) } } } : {}) }).eq('id', order.id)
+  await db.from('orders').update({ order_number: String(order.id) }).eq('id', order.id)
   const items: any[] = cart.lines.map((l) => ({
     order_id: order.id,
     item_type: 'line_item',
@@ -182,30 +184,38 @@ async function placeOrder(f: F): Promise<Out> {
   }))
   if (ship) items.push({ order_id: order.id, item_type: 'shipping', name: ship.label, quantity: 1, subtotal: cart.shippingTotal, total: cart.shippingTotal, meta: { method_id: ship.method_id, instance_id: ship.instance } })
   for (const c of cart.coupons) items.push({ order_id: order.id, item_type: 'coupon', name: c.code, quantity: 1, subtotal: c.amount, total: c.amount, meta: { code: c.code, discount: c.amount } })
-  await db.from('order_items').insert(items)
-  await db.from('order_notes').insert({ order_id: order.id, content: online ? `訂單狀態設為「等待付款中」。付款方式：${pm!.title}，轉往藍新金流付款（${merchantOrderNo(order.id)}）。` : `訂單狀態設為「等待付款中」。付款方式：${pm!.title}。`, added_by: 'system' })
-  // coupon usage + stock (manage_stock items)
-  for (const c of cart.coupons) await db.from('coupons').update({ usage_count: (c.row.usage_count || 0) + 1, used_by: [...(c.row.used_by || []), billing.email] }).eq('id', c.row.id)
-  // 藍新 orders: stock and sales counts change only when NewebPay confirms payment (newebpay_mark_paid), like WooCommerce
-  for (const l of online ? [] : cart.lines) {
-    const src: any = l.variation || l.product
-    if (src.manage_stock && src.stock_quantity !== null) {
-      const table = l.variation ? 'product_variations' : 'products'
-      const left = Number(src.stock_quantity) - l.quantity
-      await db.from(table).update({ stock_quantity: left, ...(left <= 0 && src.backorders === 'no' ? { stock_status: 'outofstock' } : {}) }).eq('id', src.id)
-    }
-    await db.from('products').update({ total_sales: (l.product.total_sales || 0) + l.quantity }).eq('id', l.product.id)
+  const { error: itemsErr } = await db.from('order_items').insert(items)
+  // Stock, atomically in the DB (row locks; refused when short — no overselling between concurrent checkouts):
+  //  - 藍新: reserve now (woocommerce_hold_stock_minutes = 60); payment converts the hold, failure / timeout releases it.
+  //    The same call enforces the flood guard (MAX_UNPAID_PER_BUYER unpaid 藍新 orders per IP / e-mail).
+  //  - 領取報價: reduce now, as before (hold + immediate convert, which also counts total_sales).
+  const hold = itemsErr ? ({ ok: false, reason: 'error' } as const) : await holdStock(order.id)
+  if (!hold.ok) {
+    await db.from('orders').delete().eq('id', order.id) // never shown to anyone; items cascade
+    const names = new Map(cart.lines.map((l) => [l.variation ? `v${l.variation.id}` : `p${l.product.id}`, l.name]))
+    const msg =
+      hold.reason === 'out_of_stock'
+        ? (hold.short || []).map((x: any) => `抱歉，我們沒有足夠的「${esc(names.get(x.variation_id ? `v${x.variation_id}` : `p${x.product_id}`) || '商品')}」庫存可以完成您的訂單（剩餘 ${Number(x.available) || 0} 件）。請編輯您的購物車並再試一次。`)
+        : hold.reason === 'too_many_unpaid'
+          ? [`您已有多筆尚未完成付款的信用卡訂單。請先完成這些訂單的付款，或等待 ${HOLD_MINUTES} 分鐘後未付款訂單自動取消，再重新下單。`]
+          : ['處理訂單時發生錯誤，請再試一次。']
+    await pushNotice(msg.map((html) => ({ type: 'error' as const, html })))
+    invalidateSite()
+    return back(hold.reason === 'out_of_stock' ? '/cart/' : '/checkout/')
   }
+  if (!online) await settleHoldForStatus(order.id, 'on-hold', true).catch((e) => console.error('[checkout] convert hold', (e as Error).message))
+  await db.from('order_notes').insert({ order_id: order.id, content: online ? `訂單狀態設為「等待付款中」。付款方式：${pm!.title}，已預留庫存 ${HOLD_MINUTES} 分鐘，轉往藍新金流付款。` : `訂單狀態設為「等待付款中」。付款方式：${pm!.title}。`, added_by: 'system' })
+  // coupon usage
+  for (const c of cart.coupons) await db.from('coupons').update({ usage_count: (c.row.usage_count || 0) + 1, used_by: [...(c.row.used_by || []), billing.email] }).eq('id', c.row.id)
   if (customer) {
     await db.from('customers').update({ billing, ...(shipDiff ? { shipping } : {}), orders_count: (customer.orders_count || 0) + 1, first_name: customer.first_name || billing.first_name, last_name: customer.last_name || billing.last_name }).eq('id', customer.id)
   }
   if (cart.cartId) await clearCart(cart.cartId)
   invalidateSite()
-  await cancelUnpaidNewebpayOrders().catch(() => 0) // 60-minute unpaid hold (WooCommerce woocommerce_hold_stock_minutes)
+  await purgePublicPages() // stock / sales counts on product pages
   if (online) {
     return back(`/api/newebpay/pay/?order=${order.id}&key=${order.order_key}`)
   }
-  await purgePublicPages() // stock / sales counts on product pages
   return back(`/checkout/order-received/${order.id}/?key=${order.order_key}`)
 }
 

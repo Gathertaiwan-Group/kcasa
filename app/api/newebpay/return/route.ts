@@ -4,13 +4,13 @@
  */
 import { svc } from '@/lib/sb'
 import { orderIdFrom, parseCallback } from '@/lib/newebpay/core'
-import { GATEWAY_ID, newebpayConfig, originOf } from '@/lib/newebpay'
+import { GATEWAY_ID, hostOf, newebpayConfig, originOf } from '@/lib/newebpay'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
   const origin = originOf(req)
-  const cfg = newebpayConfig()
+  const cfg = newebpayConfig(hostOf(req))
   const home = new URL('/my-account/orders/', origin)
   if (!cfg) return Response.redirect(home, 303)
   const form: Record<string, string> = {}

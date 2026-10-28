@@ -4,7 +4,8 @@ import { Badge, money, Notice, Pager, sp1, type SP } from '@/components/admin/ui
 import { twDateTime } from '@/lib/admin/core'
 import { listOrders, ORDER_STATUSES, orderStatusCounts } from '@/lib/admin/shop'
 import { requireAdmin } from '@/lib/admin/session'
-import { cancelUnpaidNewebpayOrders } from '@/lib/newebpay'
+import { headers } from 'next/headers'
+import { cancelUnpaidNewebpayOrders, newebpayWarning } from '@/lib/newebpay'
 
 export const metadata = { title: '訂單' }
 
@@ -12,6 +13,8 @@ export default async function Orders({ searchParams }: { searchParams: SP }) {
   await requireAdmin('orders')
   await cancelUnpaidNewebpayOrders().catch(() => 0) // 60-minute unpaid hold, like WooCommerce
   const q = await searchParams
+  const hh = await headers()
+  const npWarn = newebpayWarning((hh.get('x-forwarded-host') || hh.get('host') || '').split(',')[0].trim() || null)
   const status = sp1(q.status)
   const search = sp1(q.s)
   const offset = Number(sp1(q.offset) || 0)
@@ -20,6 +23,7 @@ export default async function Orders({ searchParams }: { searchParams: SP }) {
   return (
     <>
       <h1>訂單</h1>
+      {npWarn && <div role="alert" style={{ background: '#fcf0f1', border: '2px solid #d63638', color: '#8a2424', padding: '10px 14px', margin: '8px 0 12px', fontWeight: 600 }}>注意：{npWarn}</div>}
       <Notice q={q} />
       <div className="tabs">
         <Link href="/admin/orders/" className={!status ? 'on' : ''}>全部</Link>

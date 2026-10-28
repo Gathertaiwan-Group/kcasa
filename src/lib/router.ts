@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /** URL → view, following the old WordPress permalink structure of kcasa.pro. */
 import { cookies, headers } from 'next/headers'
+import { paymentMethods } from './newebpay'
 import { customerFor, currentUser } from './auth'
 import { loadCart, removeItem, updateCartMeta } from './cart'
 import { renderDocument } from './document'
@@ -225,7 +226,9 @@ async function routeUrl(url: URL): Promise<Out> {
       }
       ;(await cookies()).delete('kc_checkout_form')
     }
-    return html(checkoutView(wcPage(site, 8, 'checkout'), ctx, cart, prefill), site, cart, path)
+    const hh = await headers()
+    const methods = paymentMethods((hh.get('x-forwarded-host') || hh.get('host') || '').split(',')[0].trim() || null)
+    return html(checkoutView(wcPage(site, 8, 'checkout'), ctx, cart, prefill, methods), site, cart, path)
   }
   if (seg[0] === 'my-account' && page === 1) {
     const acc = wcPage(site, 9, 'my-account')

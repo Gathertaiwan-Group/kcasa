@@ -17,6 +17,27 @@ export function validKeys(k: Partial<NewebpayKeys> | null | undefined): k is New
   return !!k && typeof k.merchantId === 'string' && /^[A-Za-z0-9_]{1,20}$/.test(k.merchantId) && typeof k.hashKey === 'string' && k.hashKey.length === 32 && typeof k.hashIv === 'string' && k.hashIv.length === 16
 }
 
+/** the live shop domain(s): a NewebPay *test* configuration must never take orders there */
+export const PRODUCTION_HOSTS = ['kcasa.pro', 'www.kcasa.pro']
+export function isProductionHost(host: string | null | undefined): boolean {
+  const h = String(host || '').trim().toLowerCase().split(':')[0].replace(/\.$/, '')
+  return PRODUCTION_HOSTS.includes(h)
+}
+
+export type ResolvedConfig = NewebpayKeys & { env: 'test' | 'production'; gateway: string }
+/**
+ * Gateway config from env for the host serving the request. `blocked` = NEWEBPAY_ENV=test on kcasa.pro:
+ * refused outright (fail closed) — the test gateway approves test cards, so honouring it there would mark real
+ * orders paid with no money taken.
+ */
+export function resolveConfig(e: Record<string, string | undefined>, host: string | null): { cfg: ResolvedConfig | null; blocked: boolean } {
+  const env = (e.NEWEBPAY_ENV || '').trim()
+  const k = { merchantId: (e.NEWEBPAY_MERCHANT_ID || '').trim(), hashKey: (e.NEWEBPAY_HASH_KEY || '').trim(), hashIv: (e.NEWEBPAY_HASH_IV || '').trim() }
+  if ((env !== 'test' && env !== 'production') || !validKeys(k)) return { cfg: null, blocked: false }
+  if (env === 'test' && isProductionHost(host)) return { cfg: null, blocked: true }
+  return { cfg: { ...k, env, gateway: env === 'production' ? 'https://core.newebpay.com/MPG/mpg_gateway' : 'https://ccore.newebpay.com/MPG/mpg_gateway' }, blocked: false }
+}
+
 export function buildQuery(params: Record<string, string | number>): string {
   return new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString()
 }
@@ -53,23 +74,38 @@ export function verifyTradeSha(tradeInfoHex: string, sha: string, k: NewebpayKey
   return want.length === got.length && timingSafeEqual(want, got)
 }
 
-export function merchantOrderNo(orderId: number): string {
-  return `${ORDER_PREFIX}${orderId}`
+/**
+ * MerchantOrderNo: one per payment attempt, `KC<id>_<n>` (NewebPay refuses a number it has already seen, so a
+ * second "pay" click needs a new one). Legacy `KC<id>` (orders created before attempts existed) is still
+ * accepted on Notify / Return. NewebPay limit: ≤30 chars, letters / digits / underscore.
+ */
+export function merchantOrderNo(orderId: number, attempt?: number): string {
+  if (!Number.isSafeInteger(orderId) || orderId <= 0) throw new Error('bad_order_id')
+  if (attempt === undefined) return `${ORDER_PREFIX}${orderId}`
+  if (!Number.isInteger(attempt) || attempt < 1 || attempt > 9999) throw new Error('bad_attempt')
+  return `${ORDER_PREFIX}${orderId}_${attempt}`
+}
+const MON_RE = new RegExp(`^${ORDER_PREFIX}(\\d{1,15})(?:_(\\d{1,4}))?$`)
+export function isValidMerchantOrderNo(mon: string): boolean {
+  return typeof mon === 'string' && mon.length <= 30 && /^[A-Za-z0-9_]+$/.test(mon) && MON_RE.test(mon)
 }
 export function orderIdFrom(mon: string): number | null {
-  const m = new RegExp(`^${ORDER_PREFIX}(\\d{1,15})$`).exec(String(mon || ''))
-  return m ? Number(m[1]) : null
+  const s = String(mon || '')
+  if (!isValidMerchantOrderNo(s)) return null
+  const n = Number(MON_RE.exec(s)![1])
+  return Number.isSafeInteger(n) && n > 0 ? n : null
 }
 
 /** the MPG form NewebPay expects (POST to the gateway) */
-export function buildMpgForm(k: NewebpayKeys, p: { orderId: number; amount: number; itemDesc: string; email: string; notifyUrl: string; returnUrl: string; clientBackUrl: string; timestamp?: number }) {
+export function buildMpgForm(k: NewebpayKeys, p: { merchantOrderNo: string; amount: number; tradeLimit?: number; itemDesc: string; email: string; notifyUrl: string; returnUrl: string; clientBackUrl: string; timestamp?: number }) {
   if (!Number.isInteger(p.amount) || p.amount <= 0) throw new Error('bad_amount')
-  const params = {
+  if (!isValidMerchantOrderNo(p.merchantOrderNo)) throw new Error('bad_merchant_order_no')
+  const params: Record<string, string | number> = {
     MerchantID: k.merchantId,
     RespondType: 'JSON',
     TimeStamp: p.timestamp ?? Math.floor(Date.now() / 1000),
     Version: '2.0',
-    MerchantOrderNo: merchantOrderNo(p.orderId),
+    MerchantOrderNo: p.merchantOrderNo,
     Amt: p.amount,
     ItemDesc: p.itemDesc.slice(0, 50),
     Email: p.email,
@@ -80,6 +116,8 @@ export function buildMpgForm(k: NewebpayKeys, p: { orderId: number; amount: numb
     ClientBackURL: p.clientBackUrl,
     CREDIT: 1,
   }
+  // seconds the NewebPay payment page stays valid (NewebPay accepts 60–900)
+  if (p.tradeLimit !== undefined) params.TradeLimit = Math.max(60, Math.min(900, Math.floor(p.tradeLimit)))
   const TradeInfo = encryptTradeInfo(buildQuery(params), k)
   return { MerchantID: k.merchantId, TradeInfo, TradeSha: tradeSha(TradeInfo, k), Version: '2.0' }
 }
@@ -147,9 +185,11 @@ export type OrderRow = { id: number; status: string; total: number | string; pay
 
 export interface NotifyStore {
   getOrder(id: number): Promise<OrderRow | null>
+  /** true when `mon` is a MerchantOrderNo this site issued for order `id` (newebpay_attempts) */
+  isOrderNo(id: number, mon: string): Promise<boolean>
   /** atomic: change status → processing + reduce stock; true only for the call that changed the order */
   markPaid(id: number, tradeNo: string, meta: Record<string, unknown>): Promise<boolean>
-  /** atomic: pending → failed; true only for the call that changed the order */
+  /** atomic: pending → failed and release the stock hold; true only for the call that changed the order */
   markFailed(id: number, meta: Record<string, unknown>): Promise<boolean>
   addNote(orderId: number, content: string): Promise<void>
   audit(action: string, orderId: number | null, before: unknown, after: unknown): Promise<void>
@@ -194,7 +234,8 @@ export async function handleNotify(form: Record<string, string | undefined>, k: 
 
   const id = orderIdFrom(d.MerchantOrderNo)
   const order = id ? await store.getOrder(id) : null
-  if (!order || order.payment_method !== GATEWAY_ID || order.meta?.newebpay?.merchant_order_no !== d.MerchantOrderNo) {
+  const issued = !!order && (order.meta?.newebpay?.merchant_order_no === d.MerchantOrderNo || (await store.isOrderNo(order.id, d.MerchantOrderNo)))
+  if (!order || order.payment_method !== GATEWAY_ID || !issued) {
     await store.recordTxn({ ...base, order_id: order?.id ?? null, outcome: 'rejected:unknown_order' })
     await store.audit('order.payment.reject', order?.id ?? null, null, { reason: 'unknown_order', ...meta })
     return { httpStatus: 404, outcome: 'rejected', reason: 'unknown_order' }
@@ -229,7 +270,7 @@ export async function handleNotify(form: Record<string, string | undefined>, k: 
     return { httpStatus: 200, outcome: 'paid', orderId: order.id }
   }
 
-  // payment failed (Status is an error code)
+  // payment failed (Status is an error code): pending → failed and the stock hold is released
   if (order.status !== 'pending' || order.transaction_id) {
     await store.recordTxn({ ...base, order_id: order.id, outcome: 'ignored' })
     return { httpStatus: 200, outcome: 'ignored', orderId: order.id }
