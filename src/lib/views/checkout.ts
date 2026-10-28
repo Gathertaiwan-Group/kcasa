@@ -7,7 +7,10 @@ import { esc, money } from '../util'
 import { noticesHtml, type Ctx, type View } from './common'
 import { pageMain, seoFor } from './content'
 
-export const PAYMENT = { id: 'cheque', title: '領取報價', description: '小編會進一步與您聯繫＆報價' }
+import { CHEQUE, GATEWAY_ID, paymentMethods, type PaymentMethod } from '../newebpay'
+
+/** default (first) payment method — old site woocommerce_cheque_settings */
+export const PAYMENT = CHEQUE
 
 function lineAttrs(l: CartView['lines'][number]): string {
   const entries = Object.entries(l.attributes || {}).filter(([, v]) => v)
@@ -215,6 +218,23 @@ export function fieldHtml(prefix: string, f: Field, value: string): string {
   return `<p class="form-row ${f.cls || 'form-row-wide'}${f.required ? ' validate-required' : ''}${f.type === 'email' ? ' validate-email' : ''}${f.type === 'tel' ? ' validate-phone' : ''}" id="${name}_field" data-priority="">${label}<span class="woocommerce-input-wrapper"><input type="${f.type || 'text'}" class="input-text " name="${name}" id="${name}" placeholder="${esc(f.placeholder || '')}"  value="${esc(value)}" ${f.autocomplete ? `autocomplete="${f.autocomplete}"` : ''} ${f.required ? 'aria-required="true"' : ''} /></span></p>`
 }
 
+function paymentMethodsHtml(methods: PaymentMethod[], chosen: string): string {
+  const sel = methods.some((m) => m.id === chosen) ? chosen : methods[0].id
+  return methods
+    .map(
+      (m) => `			<li class="wc_payment_method payment_method_${m.id}">
+	<input id="payment_method_${m.id}" type="radio" class="input-radio" name="payment_method" value="${m.id}" ${m.id === sel ? "checked='checked'" : ''} data-order_button_text="" />
+
+	<label for="payment_method_${m.id}">
+		${esc(m.title)} 	</label>
+			<div class="payment_box payment_method_${m.id}" ${m.id === sel ? '' : 'style="display:none;"'}>
+			<p>${esc(m.description)}</p>
+		</div>
+	</li>`,
+    )
+    .join('\n')
+}
+
 export function checkoutView(page: Post, ctx: Ctx, cart: CartView, prefill: Record<string, string>): View {
   if (!cart.lines.length) {
     const v = cartView(page, ctx, cart)
@@ -338,15 +358,7 @@ export function checkoutView(page: Post, ctx: Ctx, cart: CartView, prefill: Reco
 		${review}
 <div id="payment" class="woocommerce-checkout-payment">
 			<ul class="wc_payment_methods payment_methods methods">
-			<li class="wc_payment_method payment_method_${PAYMENT.id}">
-	<input id="payment_method_${PAYMENT.id}" type="radio" class="input-radio" name="payment_method" value="${PAYMENT.id}"  checked='checked' data-order_button_text="" />
-
-	<label for="payment_method_${PAYMENT.id}">
-		${esc(PAYMENT.title)} 	</label>
-			<div class="payment_box payment_method_${PAYMENT.id}" >
-			<p>${esc(PAYMENT.description)}</p>
-		</div>
-	</li>
+${paymentMethodsHtml(paymentMethods(), val('payment_method'))}
 		</ul>
 		<div class="form-row place-order">
 		<noscript>
@@ -382,6 +394,14 @@ export async function orderReceivedView(page: Post, ctx: Ctx, orderId: number, k
 	</div>
 </div>`
   return { status: 200, kind: 'checkout', legacyPath: '/checkout/', main: pageMain({ ...page, title: '訂單已收到' }, ctx, inner), seo: { ...seoFor(page), title: '訂單已收到 - Kcasa 工富家飾' }, cache: 'private' }
+}
+
+function thankyouPaymentNote(o: any): string {
+  if (o.payment_method !== GATEWAY_ID) return `<p>${esc(PAYMENT.description)}</p>`
+  if (o.transaction_id || o.status === 'processing' || o.status === 'completed') return `<p class="kc-payment-status kc-paid">付款完成，感謝您的訂購！</p>`
+  if (o.status === 'failed') return `<p class="woocommerce-notice woocommerce-notice--error woocommerce-thankyou-order-failed">很抱歉，您的信用卡付款未成功（銀行或藍新金流拒絕了交易），訂單無法處理。請重新下單購買。</p>`
+  if (o.status === 'cancelled') return `<p class="woocommerce-notice woocommerce-notice--error">此訂單因逾時未付款已取消，請重新下單購買。</p>`
+  return `<p class="kc-payment-status">付款結果確認中，請稍候重新整理本頁。若您尚未完成付款，<a href="/api/newebpay/pay/?order=${o.id}&amp;key=${encodeURIComponent(o.order_key)}">按此前往藍新金流付款</a>（訂單成立後 60 分鐘內有效）。</p>`
 }
 
 const STATUS_LABEL: Record<string, string> = { pending: '等待付款中', processing: '處理中', 'on-hold': '保留', completed: '完成', cancelled: '已取消', refunded: '已退費', failed: '失敗', 'checkout-draft': '草稿' }
@@ -420,7 +440,7 @@ export function orderDetailsHtml(o: any, items: any[], thankyou: boolean): strin
 						付款方式:						<strong>${esc(o.payment_method_title)}</strong>
 					</li>
 			</ul>
-		<p>${esc(PAYMENT.description)}</p>`
+		${thankyouPaymentNote(o)}`
     : `<p>訂單 #<mark class="order-number">${esc(o.order_number || o.id)}</mark> 已於 <mark class="order-date">${fmtDate(o.created_at)}</mark> 下單，目前狀態為 <mark class="order-status">${statusLabel(o.status)}</mark>。</p>`
   return `${head}
 	<section class="woocommerce-order-details">

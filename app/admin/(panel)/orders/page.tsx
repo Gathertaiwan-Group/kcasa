@@ -4,11 +4,13 @@ import { Badge, money, Notice, Pager, sp1, type SP } from '@/components/admin/ui
 import { twDateTime } from '@/lib/admin/core'
 import { listOrders, ORDER_STATUSES, orderStatusCounts } from '@/lib/admin/shop'
 import { requireAdmin } from '@/lib/admin/session'
+import { cancelUnpaidNewebpayOrders } from '@/lib/newebpay'
 
 export const metadata = { title: '訂單' }
 
 export default async function Orders({ searchParams }: { searchParams: SP }) {
   await requireAdmin('orders')
+  await cancelUnpaidNewebpayOrders().catch(() => 0) // 60-minute unpaid hold, like WooCommerce
   const q = await searchParams
   const status = sp1(q.status)
   const search = sp1(q.s)

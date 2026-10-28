@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Form posts, handled like WordPress/WooCommerce do (POST to the page URL → redirect back with a notice):
- * add to cart, cart update / coupons / shipping, checkout (creates a *pending* order — no payment gateway),
+ * add to cart, cart update / coupons / shipping, checkout (creates a *pending* order; 藍新信用卡 orders then go to NewebPay MPG),
  * my-account login / register / lost password / addresses / account details, product reviews, WPForms.
  */
 import { cookies, headers } from 'next/headers'
@@ -13,7 +13,9 @@ import { purgePublicPages } from './page-cache'
 import { getSite, invalidateSite } from './site'
 import { esc, normPath, siteUrl } from './util'
 import { verifyWpformsToken } from './wpforms-token'
-import { BILLING_FIELDS, PAYMENT, SHIPPING_FIELDS } from './views/checkout'
+import { BILLING_FIELDS, SHIPPING_FIELDS } from './views/checkout'
+import { GATEWAY_ID, cancelUnpaidNewebpayOrders, paymentMethods } from './newebpay'
+import { merchantOrderNo } from './newebpay/core'
 
 type F = Record<string, string>
 
@@ -115,16 +117,21 @@ async function placeOrder(f: F): Promise<Out> {
     shipping.country = 'TW'
   }
   if (f['shipping_method[0]']) await updateCartMeta({ shipping_method: f['shipping_method[0]'] })
-  if ((f.payment_method || PAYMENT.id) !== PAYMENT.id) errors.push('無效的付款方式。')
+  const methods = paymentMethods()
+  const pm = methods.find((m) => m.id === (f.payment_method || methods[0].id))
+  if (!pm) errors.push('無效的付款方式。')
+  const online = pm?.id === GATEWAY_ID
   const user = await currentUser()
   const cart = await loadCart({ email: billing.email })
   if (!cart.lines.length) errors.push('抱歉，您的工作階段已過期。<a href="/shop/" class="wc-backward">回到商店</a>')
+  // amount is always the server-side cart total; NewebPay needs a positive whole-dollar TWD amount
+  else if (online && !(Number.isInteger(cart.total) && cart.total > 0)) errors.push('此訂單金額無法使用信用卡付款，請選擇其他付款方式。')
   const ip = await clientIp()
   if (!errors.length && (await tooMany('orders', ip, 10, 10))) errors.push('下單次數過於頻繁，請稍後再試。')
   if (errors.length) {
     await pushNotice(errors.map((e) => ({ type: 'error' as const, html: e })))
     const keep: F = {}
-    for (const [k, v] of Object.entries(f)) if (/^(billing|shipping)_|^order_comments$|^ship_to_different_address$/.test(k)) keep[k] = v.slice(0, 200)
+    for (const [k, v] of Object.entries(f)) if (/^(billing|shipping)_|^order_comments$|^ship_to_different_address$|^payment_method$/.test(k)) keep[k] = v.slice(0, 200)
     ;(await cookies()).set('kc_checkout_form', Buffer.from(JSON.stringify(keep)).toString('base64url'), { path: '/checkout/', httpOnly: true, sameSite: 'lax', maxAge: 300 })
     return back('/checkout/')
   }
@@ -140,8 +147,8 @@ async function placeOrder(f: F): Promise<Out> {
       customer_id: customer?.id ?? null,
       billing,
       shipping,
-      payment_method: PAYMENT.id,
-      payment_method_title: PAYMENT.title,
+      payment_method: pm!.id,
+      payment_method_title: pm!.title,
       shipping_method: ship?.id || null,
       subtotal: cart.subtotal,
       discount_total: cart.discount,
@@ -160,7 +167,7 @@ async function placeOrder(f: F): Promise<Out> {
     await pushNotice({ type: 'error', html: '處理訂單時發生錯誤，請再試一次。' })
     return back('/checkout/')
   }
-  await db.from('orders').update({ order_number: String(order.id) }).eq('id', order.id)
+  await db.from('orders').update({ order_number: String(order.id), ...(online ? { meta: { shipping_title: ship?.label || '', source: 'nextjs', newebpay: { merchant_order_no: merchantOrderNo(order.id) } } } : {}) }).eq('id', order.id)
   const items: any[] = cart.lines.map((l) => ({
     order_id: order.id,
     item_type: 'line_item',
@@ -176,10 +183,11 @@ async function placeOrder(f: F): Promise<Out> {
   if (ship) items.push({ order_id: order.id, item_type: 'shipping', name: ship.label, quantity: 1, subtotal: cart.shippingTotal, total: cart.shippingTotal, meta: { method_id: ship.method_id, instance_id: ship.instance } })
   for (const c of cart.coupons) items.push({ order_id: order.id, item_type: 'coupon', name: c.code, quantity: 1, subtotal: c.amount, total: c.amount, meta: { code: c.code, discount: c.amount } })
   await db.from('order_items').insert(items)
-  await db.from('order_notes').insert({ order_id: order.id, content: `訂單狀態設為「等待付款中」。付款方式：${PAYMENT.title}（未串接金流）。`, added_by: 'system' })
+  await db.from('order_notes').insert({ order_id: order.id, content: online ? `訂單狀態設為「等待付款中」。付款方式：${pm!.title}，轉往藍新金流付款（${merchantOrderNo(order.id)}）。` : `訂單狀態設為「等待付款中」。付款方式：${pm!.title}。`, added_by: 'system' })
   // coupon usage + stock (manage_stock items)
   for (const c of cart.coupons) await db.from('coupons').update({ usage_count: (c.row.usage_count || 0) + 1, used_by: [...(c.row.used_by || []), billing.email] }).eq('id', c.row.id)
-  for (const l of cart.lines) {
+  // 藍新 orders: stock and sales counts change only when NewebPay confirms payment (newebpay_mark_paid), like WooCommerce
+  for (const l of online ? [] : cart.lines) {
     const src: any = l.variation || l.product
     if (src.manage_stock && src.stock_quantity !== null) {
       const table = l.variation ? 'product_variations' : 'products'
@@ -193,6 +201,10 @@ async function placeOrder(f: F): Promise<Out> {
   }
   if (cart.cartId) await clearCart(cart.cartId)
   invalidateSite()
+  await cancelUnpaidNewebpayOrders().catch(() => 0) // 60-minute unpaid hold (WooCommerce woocommerce_hold_stock_minutes)
+  if (online) {
+    return back(`/api/newebpay/pay/?order=${order.id}&key=${order.order_key}`)
+  }
   await purgePublicPages() // stock / sales counts on product pages
   return back(`/checkout/order-received/${order.id}/?key=${order.order_key}`)
 }

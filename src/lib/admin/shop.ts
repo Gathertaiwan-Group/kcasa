@@ -326,11 +326,13 @@ export async function orderStatusCounts() {
 export async function getOrder(id: number) {
   const o = must(await svc().from('orders').select('*').eq('id', id).maybeSingle(), 'orders') as any
   if (!o) throw new OpError(`order ${id} not found`, 404)
-  const [items, notes, refunds] = await Promise.all([
+  const [items, notes, refunds, txns] = await Promise.all([
     svc().from('order_items').select('*').eq('order_id', id).order('id'),
     svc().from('order_notes').select('*').eq('order_id', id).order('created_at', { ascending: false }),
     svc().from('order_refunds').select('*').eq('order_id', id).order('created_at'),
+    svc().from('payment_transactions').select('id,source,merchant_order_no,trade_no,status,message,amount,payment_type,outcome,result,created_at').eq('order_id', id).order('id', { ascending: false }).limit(50),
   ])
+  o.payment_transactions = txns.error ? [] : txns.data || []
   o.items = must(items, 'order_items')
   o.notes = must(notes, 'order_notes')
   o.refunds = must(refunds, 'order_refunds')

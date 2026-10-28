@@ -9,6 +9,13 @@
       $s.slideToggle('fast');
       $(this).attr('aria-expanded', $(this).attr('aria-expanded') === 'true' ? 'false' : 'true');
     });
+    // payment method: show only the chosen method's description (WooCommerce checkout.js behaviour)
+    $(document).on('change', 'input[name="payment_method"]', function () {
+      var id = $(this).val();
+      $('.wc_payment_methods .payment_box').each(function () {
+        $(this).toggle($(this).hasClass('payment_method_' + id));
+      });
+    });
     // shipping method change: save in the cart; cart page reloads, checkout updates the total in place
     $(document).on('change', 'input.shipping_method', function () {
       var v = $(this).val();

@@ -44,6 +44,22 @@ export default async function OrderDetail({ params, searchParams }: { params: Pr
               <dt>建立時間</dt><dd>{twDateTime(o.created_at)}（{o.created_via}）</dd>
               <dt>付款方式</dt><dd>{o.payment_method_title || o.payment_method || '—'} {o.transaction_id && `· 交易編號 ${o.transaction_id}`}</dd>
               <dt>付款時間</dt><dd>{twDateTime(o.paid_at)}</dd>
+              {o.meta?.newebpay && (
+                <>
+                  <dt>藍新交易</dt>
+                  <dd>
+                    商店訂單編號 {o.meta.newebpay.merchant_order_no || '—'}
+                    {o.meta.newebpay.trade_no && <> · 藍新交易序號 {o.meta.newebpay.trade_no}</>}
+                    {o.meta.newebpay.status && <> · 結果 {o.meta.newebpay.status}{o.meta.newebpay.message ? `（${o.meta.newebpay.message}）` : ''}</>}
+                    {o.meta.newebpay.amount !== undefined && <> · 金額 {money(o.meta.newebpay.amount)}</>}
+                    {o.meta.newebpay.payment_type && <> · {o.meta.newebpay.payment_type}</>}
+                    {o.meta.newebpay.pay_time && <> · 付款 {o.meta.newebpay.pay_time}</>}
+                    {o.meta.newebpay.card6 && o.meta.newebpay.card4 && <> · 卡號 {o.meta.newebpay.card6}******{o.meta.newebpay.card4}</>}
+                    {o.meta.newebpay.auth_bank && <> · 收單 {o.meta.newebpay.auth_bank}</>}
+                    {o.meta.newebpay.auth_code && <> · 授權碼 {o.meta.newebpay.auth_code}</>}
+                  </dd>
+                </>
+              )}
               <dt>完成時間</dt><dd>{twDateTime(o.completed_at)}</dd>
               <dt>顧客</dt><dd>{o.customer ? <Link href={`/admin/customers/${o.customer.id}/`}>{o.customer.display_name || o.customer.email}</Link> : '訪客'}</dd>
               <dt>運送方式</dt><dd>{o.shipping_method || '—'}</dd>
@@ -102,8 +118,26 @@ export default async function OrderDetail({ params, searchParams }: { params: Pr
             <label>備註（選填）</label>
             <input type="text" name="note" className="w100" />
             <p><button type="submit" className="primary">更新訂單</button></p>
-            <p className="small muted">本站未串接金流：結帳只建立「等待付款中」訂單，收款後請手動改為「處理中」。</p>
+            <p className="small muted">{o.payment_method === 'ry_newebpay_credit' ? '藍新信用卡訂單：付款成功時由藍新通知自動改為「處理中」並扣庫存；60 分鐘未付款自動取消。' : '領取報價訂單：結帳只建立「等待付款中」訂單，收款後請手動改為「處理中」。'}</p>
           </form>
+          {o.payment_transactions.length > 0 && (
+            <div className="card">
+              <h3>藍新金流通知紀錄</h3>
+              <table className="list">
+                <thead><tr><th>時間</th><th>結果</th><th>交易序號</th><th className="num">金額</th></tr></thead>
+                <tbody>
+                  {o.payment_transactions.map((t: any) => (
+                    <tr key={t.id}>
+                      <td className="small">{twDateTime(t.created_at)}</td>
+                      <td className="small">{t.outcome}<div className="muted">{t.status} {t.message}</div></td>
+                      <td className="small">{t.trade_no || '—'}</td>
+                      <td className="num">{t.amount === null ? '—' : money(t.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <div className="card">
             <h3>訂單備註</h3>
             <form action={orderNoteAction}>
