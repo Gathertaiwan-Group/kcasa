@@ -6,9 +6,7 @@
  * without them the gateway is simply not offered and checkout keeps working with 領取報價 only.
  */
 import { audit as auditLog } from '../admin/core'
-import { purgePublicPages } from '../page-cache'
 import { svc } from '../sb'
-import { invalidateSite } from '../site'
 import { esc } from '../util'
 import { GATEWAY_ID, buildMpgForm, isProductionEnv, isProductionHost, isValidMerchantOrderNo, resolveConfig, type NewebpayKeys, type NotifyStore } from './core'
 
@@ -179,16 +177,6 @@ export async function cancelUnpaidNewebpayOrders(): Promise<number> {
     return 0
   }
   return ((data as any[]) || []).length
-}
-
-/** run the expiry before a stock check (add to cart / checkout); refresh cached stock when anything was released */
-export async function releaseExpiredHolds(): Promise<number> {
-  const n = await cancelUnpaidNewebpayOrders().catch(() => 0)
-  if (n > 0) {
-    invalidateSite()
-    await purgePublicPages().catch(() => undefined)
-  }
-  return n
 }
 
 /** seconds left in the 60-minute payment window */

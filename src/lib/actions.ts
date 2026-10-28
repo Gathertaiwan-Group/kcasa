@@ -14,7 +14,8 @@ import { getSite, invalidateSite } from './site'
 import { esc, normPath, siteUrl } from './util'
 import { verifyWpformsToken } from './wpforms-token'
 import { BILLING_FIELDS, SHIPPING_FIELDS } from './views/checkout'
-import { GATEWAY_ID, HOLD_MINUTES, holdStock, paymentMethods, releaseExpiredHolds, settleHoldForStatus } from './newebpay'
+import { GATEWAY_ID, HOLD_MINUTES, holdStock, paymentMethods, settleHoldForStatus } from './newebpay'
+import { releaseExpiredHolds } from './newebpay/expire'
 
 type F = Record<string, string>
 

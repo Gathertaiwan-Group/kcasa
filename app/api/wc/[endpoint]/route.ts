@@ -3,7 +3,7 @@ import type { NextRequest } from 'next/server'
 import { addToCart, cartHashOf, loadCart, removeItem, syncWcCookies } from '@/lib/cart'
 import { miniCartHtml } from '@/lib/document'
 import { responsiveImages } from '@/lib/images'
-import { releaseExpiredHolds } from '@/lib/newebpay'
+import { releaseExpiredHolds } from '@/lib/newebpay/expire'
 import { getSite } from '@/lib/site'
 
 export const dynamic = 'force-dynamic'
